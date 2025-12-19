@@ -173,12 +173,14 @@ func runSpawn(cmd *cobra.Command, args []string) error {
 		if err := sessMgr.Start(polecatName, session.StartOptions{}); err != nil {
 			return fmt.Errorf("starting session: %w", err)
 		}
-		// Wait for claude to initialize
-		time.Sleep(2 * time.Second)
+		// Wait for Claude to fully initialize (needs 4-5s for prompt)
+		fmt.Printf("Waiting for Claude to initialize...\n")
+		time.Sleep(5 * time.Second)
 	}
 
 	// Inject initial context
 	context := buildSpawnContext(issue, spawnMessage)
+	fmt.Printf("Injecting work assignment...\n")
 	if err := sessMgr.Inject(polecatName, context); err != nil {
 		return fmt.Errorf("injecting context: %w", err)
 	}

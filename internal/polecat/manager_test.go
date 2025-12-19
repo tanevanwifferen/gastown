@@ -105,7 +105,7 @@ func TestRemoveNotFound(t *testing.T) {
 	}
 	m := NewManager(r, git.NewGit(root))
 
-	err := m.Remove("nonexistent")
+	err := m.Remove("nonexistent", false)
 	if err != ErrPolecatNotFound {
 		t.Errorf("Remove = %v, want ErrPolecatNotFound", err)
 	}

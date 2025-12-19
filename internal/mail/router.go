@@ -25,25 +25,24 @@ func NewRouter(workDir string) *Router {
 	}
 }
 
-// Send delivers a message via beads mail.
+// Send delivers a message via beads message.
 func (r *Router) Send(msg *Message) error {
 	// Convert addresses to beads identities
 	toIdentity := addressToIdentity(msg.To)
 	fromIdentity := addressToIdentity(msg.From)
 
-	// Build command: bd mail send <recipient> -s <subject> -m <body> --identity <sender>
-	args := []string{"mail", "send", toIdentity,
+	// Build command: bd message send <recipient> <body> -s <subject>
+	args := []string{"message", "send", toIdentity, msg.Body,
 		"-s", msg.Subject,
-		"-m", msg.Body,
-		"--identity", fromIdentity,
 	}
 
-	// Add --urgent flag for high priority
+	// Add importance flag for high priority
 	if msg.Priority == PriorityHigh {
-		args = append(args, "--urgent")
+		args = append(args, "--importance", "high")
 	}
 
 	cmd := exec.Command("bd", args...)
+	cmd.Env = append(cmd.Environ(), "BEADS_AGENT_NAME="+fromIdentity)
 	cmd.Dir = r.workDir
 
 	var stderr bytes.Buffer

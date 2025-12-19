@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/steveyegge/gastown/internal/rig"
@@ -36,8 +38,17 @@ func TestPolecatDir(t *testing.T) {
 }
 
 func TestHasPolecat(t *testing.T) {
+	root := t.TempDir()
+	// hasPolecat checks filesystem, so create actual directories
+	for _, name := range []string{"Toast", "Cheedo"} {
+		if err := os.MkdirAll(filepath.Join(root, "polecats", name), 0755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+
 	r := &rig.Rig{
 		Name:     "gastown",
+		Path:     root,
 		Polecats: []string{"Toast", "Cheedo"},
 	}
 	m := NewManager(tmux.NewTmux(), r)

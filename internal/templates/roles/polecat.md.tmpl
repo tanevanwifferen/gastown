@@ -49,6 +49,14 @@ Town ({{ .TownRoot }})
 - `bd create --title="Found bug" --type=bug` - File new issue
 - `bd create --title="Need feature" --type=task` - File new task
 
+### Agent UX: File Issues for CLI Surprises
+If you guess how a `gt` or `bd` command should work and it fails, file a bead!
+Example: If `gt session capture rig/polecat 50` fails but `-n 50` works, file:
+```
+bd create --title="gt session capture: Support positional line count" --type=task --priority=1
+```
+Agent-friendly UX is critical. Your guesses reveal what's intuitive.
+
 ### Completion
 - `gt done` - Signal work ready for merge queue
 - `bd sync` - Sync beads changes

@@ -11,9 +11,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/swarm"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -291,13 +294,14 @@ func runSwarmCreate(cmd *cobra.Command, args []string) error {
 func runSwarmStart(cmd *cobra.Command, args []string) error {
 	swarmID := args[0]
 
-	// Find the swarm
+	// Find the swarm and its rig
 	rigs, _, err := getAllRigs()
 	if err != nil {
 		return err
 	}
 
 	var store *SwarmStore
+	var foundRig *rig.Rig
 
 	for _, r := range rigs {
 		s, err := LoadSwarmStore(r.Path)
@@ -307,6 +311,7 @@ func runSwarmStart(cmd *cobra.Command, args []string) error {
 
 		if _, exists := s.Swarms[swarmID]; exists {
 			store = s
+			foundRig = r
 			break
 		}
 	}
@@ -329,6 +334,73 @@ func runSwarmStart(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Swarm %s started\n", style.Bold.Render("✓"), swarmID)
+
+	// Spawn sessions for workers with tasks
+	if len(sw.Workers) > 0 && len(sw.Tasks) > 0 {
+		fmt.Printf("\nSpawning workers...\n")
+		if err := spawnSwarmWorkers(foundRig, sw); err != nil {
+			fmt.Printf("Warning: failed to spawn some workers: %v\n", err)
+		}
+	}
+
+	return nil
+}
+
+// spawnSwarmWorkers spawns sessions for swarm workers with task assignments.
+func spawnSwarmWorkers(r *rig.Rig, sw *swarm.Swarm) error {
+	t := tmux.NewTmux()
+	sessMgr := session.NewManager(t, r)
+	polecatGit := git.NewGit(r.Path)
+	polecatMgr := polecat.NewManager(r, polecatGit)
+
+	// Pair workers with tasks (round-robin if more tasks than workers)
+	workerIdx := 0
+	for i, task := range sw.Tasks {
+		if task.State != swarm.TaskPending {
+			continue
+		}
+
+		if workerIdx >= len(sw.Workers) {
+			break // No more workers
+		}
+
+		worker := sw.Workers[workerIdx]
+		workerIdx++
+
+		// Assign task to worker in swarm state
+		sw.Tasks[i].Assignee = worker
+		sw.Tasks[i].State = swarm.TaskAssigned
+
+		// Update polecat state
+		if err := polecatMgr.AssignIssue(worker, task.IssueID); err != nil {
+			fmt.Printf("  Warning: couldn't assign %s to %s: %v\n", task.IssueID, worker, err)
+			continue
+		}
+
+		// Check if already running
+		running, _ := sessMgr.IsRunning(worker)
+		if running {
+			fmt.Printf("  %s already running, injecting task...\n", worker)
+		} else {
+			fmt.Printf("  Starting %s...\n", worker)
+			if err := sessMgr.Start(worker, session.StartOptions{}); err != nil {
+				fmt.Printf("  Warning: couldn't start %s: %v\n", worker, err)
+				continue
+			}
+			// Wait for Claude to initialize
+			time.Sleep(5 * time.Second)
+		}
+
+		// Inject work assignment
+		context := fmt.Sprintf("[SWARM] You are part of swarm %s.\n\nAssigned task: %s\nTitle: %s\n\nWork on this task. When complete, commit and signal DONE.",
+			sw.ID, task.IssueID, task.Title)
+		if err := sessMgr.Inject(worker, context); err != nil {
+			fmt.Printf("  Warning: couldn't inject to %s: %v\n", worker, err)
+		} else {
+			fmt.Printf("  %s → %s ✓\n", worker, task.IssueID)
+		}
+	}
+
 	return nil
 }
 

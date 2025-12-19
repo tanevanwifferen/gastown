@@ -311,10 +311,11 @@ func (m *Manager) loadTasksFromBeads(epicID string) ([]SwarmTask, error) {
 		return nil, fmt.Errorf("epic not found: %s", epicID)
 	}
 
-	// Extract parent-child dependents as tasks
+	// Extract dependents as tasks (issues that depend on/are blocked by this epic)
+	// Accept both "parent-child" and "blocks" relationships
 	var tasks []SwarmTask
 	for _, dep := range issues[0].Dependents {
-		if dep.DependencyType != "parent-child" {
+		if dep.DependencyType != "parent-child" && dep.DependencyType != "blocks" {
 			continue
 		}
 
