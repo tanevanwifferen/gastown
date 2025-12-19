@@ -47,6 +47,7 @@ Commands:
   gt crew at <name>        Attach to crew workspace session
   gt crew remove <name>    Remove a crew workspace
   gt crew refresh <name>   Context cycling with mail-to-self handoff
+  gt crew restart <name>   Kill and restart session fresh (alias: rs)
   gt crew status [<name>]  Show detailed workspace status`,
 }
 
@@ -150,6 +151,27 @@ Examples:
 	RunE: runCrewStatus,
 }
 
+var crewRestartCmd = &cobra.Command{
+	Use:     "restart <name>",
+	Aliases: []string{"rs"},
+	Short:   "Kill and restart crew workspace session",
+	Long: `Kill the tmux session and restart fresh with Claude.
+
+Useful when a crew member gets confused or needs a clean slate.
+Unlike 'refresh', this does NOT send handoff mail - it's a clean start.
+
+The command will:
+1. Kill existing tmux session if running
+2. Start fresh session with Claude
+3. Run gt prime to reinitialize context
+
+Examples:
+  gt crew restart dave            # Restart dave's session
+  gt crew rs emma                 # Same, using alias`,
+	Args: cobra.ExactArgs(1),
+	RunE: runCrewRestart,
+}
+
 var crewRenameCmd = &cobra.Command{
 	Use:   "rename <old-name> <new-name>",
 	Short: "Rename a crew workspace",
@@ -205,6 +227,8 @@ func init() {
 	crewPristineCmd.Flags().StringVar(&crewRig, "rig", "", "Filter by rig name")
 	crewPristineCmd.Flags().BoolVar(&crewJSON, "json", false, "Output as JSON")
 
+	crewRestartCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to use")
+
 	// Add subcommands
 	crewCmd.AddCommand(crewAddCmd)
 	crewCmd.AddCommand(crewListCmd)
@@ -214,6 +238,7 @@ func init() {
 	crewCmd.AddCommand(crewStatusCmd)
 	crewCmd.AddCommand(crewRenameCmd)
 	crewCmd.AddCommand(crewPristineCmd)
+	crewCmd.AddCommand(crewRestartCmd)
 
 	rootCmd.AddCommand(crewCmd)
 }
@@ -708,6 +733,62 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("%s Refreshed crew workspace: %s/%s\n",
+		style.Bold.Render("✓"), r.Name, name)
+	fmt.Printf("Attach with: %s\n", style.Dim.Render(fmt.Sprintf("gt crew at %s", name)))
+
+	return nil
+}
+
+func runCrewRestart(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	crewMgr, r, err := getCrewManager(crewRig)
+	if err != nil {
+		return err
+	}
+
+	// Get the crew worker
+	worker, err := crewMgr.Get(name)
+	if err != nil {
+		if err == crew.ErrCrewNotFound {
+			return fmt.Errorf("crew workspace '%s' not found", name)
+		}
+		return fmt.Errorf("getting crew worker: %w", err)
+	}
+
+	t := tmux.NewTmux()
+	sessionID := crewSessionName(r.Name, name)
+
+	// Kill existing session if running
+	if hasSession, _ := t.HasSession(sessionID); hasSession {
+		if err := t.KillSession(sessionID); err != nil {
+			return fmt.Errorf("killing old session: %w", err)
+		}
+		fmt.Printf("Killed session %s\n", sessionID)
+	}
+
+	// Start new session
+	if err := t.NewSession(sessionID, worker.ClonePath); err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+
+	// Set environment
+	t.SetEnvironment(sessionID, "GT_RIG", r.Name)
+	t.SetEnvironment(sessionID, "GT_CREW", name)
+
+	// Start claude with skip permissions (crew workers are trusted)
+	// Use SendKeysDelayed to allow shell initialization after NewSession
+	if err := t.SendKeysDelayed(sessionID, "claude --dangerously-skip-permissions", 200); err != nil {
+		return fmt.Errorf("starting claude: %w", err)
+	}
+
+	// Wait for Claude to initialize, then prime it
+	if err := t.SendKeysDelayed(sessionID, "gt prime", 2000); err != nil {
+		// Non-fatal: Claude started but priming failed
+		fmt.Printf("Warning: Could not send prime command: %v\n", err)
+	}
+
+	fmt.Printf("%s Restarted crew workspace: %s/%s\n",
 		style.Bold.Render("✓"), r.Name, name)
 	fmt.Printf("Attach with: %s\n", style.Dim.Render(fmt.Sprintf("gt crew at %s", name)))
 
