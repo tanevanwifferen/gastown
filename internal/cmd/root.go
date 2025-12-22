@@ -33,6 +33,9 @@ func Execute() {
 }
 
 func init() {
+	// Enable prefix matching for subcommands (e.g., "gt ref at" -> "gt refinery attach")
+	cobra.EnablePrefixMatching = true
+
 	// Global flags can be added here
 	// rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file")
 }
