@@ -63,6 +63,11 @@ type SlungWork struct {
 
 	// Subject is optional subject line (used in handoff mail).
 	Subject string `json:"subject,omitempty"`
+
+	// Args is optional natural language instructions for the formula executor.
+	// Example: "patch release" or "focus on security issues"
+	// The LLM executor interprets these instructions - no schema needed.
+	Args string `json:"args,omitempty"`
 }
 
 // NewSlungWork creates a new slung work hook file.

@@ -41,6 +41,13 @@ Standalone formula slinging:
   gt sling mol-town-shutdown mayor/     # Cook + wisp + attach + nudge
   gt sling towers-of-hanoi --var disks=3  # With formula variables
 
+Natural language args (for LLM executor):
+  gt sling beads-release --args "patch release"
+  gt sling code-review gt-abc --args "focus on security issues"
+
+The --args string is stored in the hook and shown to the executor.
+Since the executor is an LLM, it interprets these instructions naturally.
+
 When the first argument is a formula (not a bead), sling will:
   1. Cook the formula (bd cook)
   2. Create a wisp instance (bd wisp)
@@ -69,6 +76,7 @@ var (
 	slingDryRun   bool
 	slingOnTarget string   // --on flag: target bead when slinging a formula
 	slingVars     []string // --var flag: formula variables (key=value)
+	slingArgs     string   // --args flag: natural language instructions for executor
 )
 
 func init() {
@@ -77,6 +85,7 @@ func init() {
 	slingCmd.Flags().BoolVarP(&slingDryRun, "dry-run", "n", false, "Show what would be done")
 	slingCmd.Flags().StringVar(&slingOnTarget, "on", "", "Apply formula to existing bead (implies wisp scaffolding)")
 	slingCmd.Flags().StringArrayVar(&slingVars, "var", nil, "Formula variable (key=value), can be repeated")
+	slingCmd.Flags().StringVarP(&slingArgs, "args", "a", "", "Natural language instructions for the executor (e.g., 'patch release')")
 	rootCmd.AddCommand(slingCmd)
 }
 
@@ -150,6 +159,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	sw.Subject = slingSubject
 	sw.Context = slingMessage
 	sw.Formula = formulaName
+	sw.Args = slingArgs
 
 	// Display what we're doing
 	if formulaName != "" {
@@ -172,6 +182,9 @@ func runSling(cmd *cobra.Command, args []string) error {
 		if slingMessage != "" {
 			fmt.Printf("  context: %s\n", slingMessage)
 		}
+		if slingArgs != "" {
+			fmt.Printf("  args: %s\n", slingArgs)
+		}
 		fmt.Printf("Would inject start prompt to pane: %s\n", targetPane)
 		return nil
 	}
@@ -184,7 +197,7 @@ func runSling(cmd *cobra.Command, args []string) error {
 	fmt.Printf("%s Work attached to hook\n", style.Bold.Render("✓"))
 
 	// Inject the "start now" prompt
-	if err := injectStartPrompt(targetPane, beadID, slingSubject); err != nil {
+	if err := injectStartPrompt(targetPane, beadID, slingSubject, slingArgs); err != nil {
 		return fmt.Errorf("injecting start prompt: %w", err)
 	}
 
@@ -194,14 +207,21 @@ func runSling(cmd *cobra.Command, args []string) error {
 
 // injectStartPrompt sends a prompt to the target pane to start working.
 // Uses the reliable nudge pattern: literal mode + 500ms debounce + separate Enter.
-func injectStartPrompt(pane, beadID, subject string) error {
+func injectStartPrompt(pane, beadID, subject, args string) error {
 	if pane == "" {
 		return fmt.Errorf("no target pane")
 	}
 
 	// Build the prompt to inject
 	var prompt string
-	if subject != "" {
+	if args != "" {
+		// Args provided - include them prominently in the prompt
+		if subject != "" {
+			prompt = fmt.Sprintf("Work slung: %s (%s). Args: %s. Start working now - use these args to guide your execution.", beadID, subject, args)
+		} else {
+			prompt = fmt.Sprintf("Work slung: %s. Args: %s. Start working now - use these args to guide your execution.", beadID, args)
+		}
+	} else if subject != "" {
 		prompt = fmt.Sprintf("Work slung: %s (%s). Start working on it now - no questions, just begin.", beadID, subject)
 	} else {
 		prompt = fmt.Sprintf("Work slung: %s. Start working on it now - run `gt mol status` to see the hook, then begin.", beadID)
@@ -429,6 +449,7 @@ func runSlingFormula(args []string) error {
 	}
 	sw.Context = slingMessage
 	sw.Formula = formulaName
+	sw.Args = slingArgs
 
 	if err := wisp.WriteSlungWork(hookRoot, targetAgent, sw); err != nil {
 		return fmt.Errorf("writing to hook: %w", err)
@@ -441,7 +462,12 @@ func runSlingFormula(args []string) error {
 		return nil
 	}
 
-	prompt := fmt.Sprintf("Formula %s slung. Run `gt mol status` to see your hook, then execute the steps.", formulaName)
+	var prompt string
+	if slingArgs != "" {
+		prompt = fmt.Sprintf("Formula %s slung. Args: %s. Run `gt mol status` to see your hook, then execute using these args.", formulaName, slingArgs)
+	} else {
+		prompt = fmt.Sprintf("Formula %s slung. Run `gt mol status` to see your hook, then execute the steps.", formulaName)
+	}
 	t := tmux.NewTmux()
 	if err := t.NudgePane(targetPane, prompt); err != nil {
 		return fmt.Errorf("nudging: %w", err)

@@ -462,6 +462,9 @@ func outputMoleculeStatus(status MoleculeStatusInfo) error {
 		if status.SlungWork.Context != "" {
 			fmt.Printf("   Context: %s\n", status.SlungWork.Context)
 		}
+		if status.SlungWork.Args != "" {
+			fmt.Printf("   Args: %s\n", style.Bold.Render(status.SlungWork.Args))
+		}
 		fmt.Printf("   Slung by: %s at %s\n",
 			status.SlungWork.CreatedBy,
 			status.SlungWork.CreatedAt.Format("2006-01-02 15:04:05"))

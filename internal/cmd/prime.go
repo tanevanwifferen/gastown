@@ -1360,6 +1360,11 @@ func checkSlungWork(ctx RoleContext) bool {
 	if sw.Context != "" {
 		fmt.Printf("  Context: %s\n", sw.Context)
 	}
+	if sw.Args != "" {
+		fmt.Printf("  Args: %s\n", style.Bold.Render(sw.Args))
+		fmt.Println()
+		fmt.Printf("  %s Use these args to guide your execution.\n", style.Bold.Render("→"))
+	}
 	fmt.Printf("  Slung by: %s at %s\n", sw.CreatedBy, sw.CreatedAt.Format("2006-01-02 15:04:05"))
 	fmt.Println()
 
