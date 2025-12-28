@@ -14,6 +14,135 @@ import (
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
+// AgentBeadFields holds parsed fields from an agent bead's description.
+// Agent beads store their state as key: value lines in the description.
+type AgentBeadFields struct {
+	RoleType   string // role_type: mayor, deacon, witness, refinery, polecat
+	Rig        string // rig: gastown (or null)
+	AgentState string // agent_state: idle, working, done
+	HookBead   string // hook_bead: the bead ID on the hook (or null)
+	RoleBead   string // role_bead: the role definition bead
+}
+
+// ParseAgentBeadFields extracts agent bead fields from a bead's description.
+// Returns nil if no agent fields found.
+func ParseAgentBeadFields(description string) *AgentBeadFields {
+	if description == "" {
+		return nil
+	}
+
+	fields := &AgentBeadFields{}
+	hasFields := false
+
+	for _, line := range strings.Split(description, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		colonIdx := strings.Index(line, ":")
+		if colonIdx == -1 {
+			continue
+		}
+
+		key := strings.TrimSpace(line[:colonIdx])
+		value := strings.TrimSpace(line[colonIdx+1:])
+		if value == "" || value == "null" {
+			continue
+		}
+
+		switch strings.ToLower(key) {
+		case "role_type":
+			fields.RoleType = value
+			hasFields = true
+		case "rig":
+			fields.Rig = value
+			hasFields = true
+		case "agent_state":
+			fields.AgentState = value
+			hasFields = true
+		case "hook_bead":
+			fields.HookBead = value
+			hasFields = true
+		case "role_bead":
+			fields.RoleBead = value
+			hasFields = true
+		}
+	}
+
+	if !hasFields {
+		return nil
+	}
+	return fields
+}
+
+// buildAgentBeadID constructs the agent bead ID from an agent identity.
+// Examples:
+//   - "mayor" -> "gt-mayor"
+//   - "deacon" -> "gt-deacon"
+//   - "gastown/witness" -> "gt-witness-gastown"
+//   - "gastown/refinery" -> "gt-refinery-gastown"
+//   - "gastown/nux" (polecat) -> "gt-polecat-gastown-nux"
+//
+// If role is unknown, it tries to infer from the identity string.
+func buildAgentBeadID(identity string, role Role) string {
+	parts := strings.Split(identity, "/")
+
+	// If role is unknown or empty, try to infer from identity
+	if role == RoleUnknown || role == Role("") {
+		switch {
+		case identity == "mayor":
+			return "gt-mayor"
+		case identity == "deacon":
+			return "gt-deacon"
+		case len(parts) == 2 && parts[1] == "witness":
+			return "gt-witness-" + parts[0]
+		case len(parts) == 2 && parts[1] == "refinery":
+			return "gt-refinery-" + parts[0]
+		case len(parts) == 2:
+			// Assume rig/name is a polecat
+			return "gt-polecat-" + parts[0] + "-" + parts[1]
+		case len(parts) == 3 && parts[1] == "crew":
+			// rig/crew/name - crew member (no agent bead)
+			return ""
+		case len(parts) == 3 && parts[1] == "polecats":
+			// rig/polecats/name - explicit polecat
+			return "gt-polecat-" + parts[0] + "-" + parts[2]
+		default:
+			return ""
+		}
+	}
+
+	switch role {
+	case RoleMayor:
+		return "gt-mayor"
+	case RoleDeacon:
+		return "gt-deacon"
+	case RoleWitness:
+		if len(parts) >= 1 {
+			return "gt-witness-" + parts[0]
+		}
+		return "gt-witness"
+	case RoleRefinery:
+		if len(parts) >= 1 {
+			return "gt-refinery-" + parts[0]
+		}
+		return "gt-refinery"
+	case RolePolecat:
+		if len(parts) >= 2 {
+			return "gt-polecat-" + parts[0] + "-" + parts[1]
+		} else if len(parts) == 1 {
+			return "gt-polecat-" + parts[0]
+		}
+		return ""
+	case RoleCrew:
+		// Crew members may not have agent beads
+		return ""
+	default:
+		return ""
+	}
+}
+
 // MoleculeProgressInfo contains progress information for a molecule instance.
 type MoleculeProgressInfo struct {
 	RootID       string   `json:"root_id"`
@@ -32,6 +161,7 @@ type MoleculeProgressInfo struct {
 type MoleculeStatusInfo struct {
 	Target           string                `json:"target"`
 	Role             string                `json:"role"`
+	AgentBeadID      string                `json:"agent_bead_id,omitempty"` // The agent bead if found
 	HasWork          bool                  `json:"has_work"`
 	PinnedBead       *beads.Issue          `json:"pinned_bead,omitempty"`
 	AttachedMolecule string                `json:"attached_molecule,omitempty"`
@@ -240,50 +370,99 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 
 	b := beads.New(workDir)
 
-	// Find pinned beads for this agent
-	pinnedBeads, err := b.List(beads.ListOptions{
-		Status:   beads.StatusPinned,
-		Assignee: target,
-		Priority: -1,
-	})
-	if err != nil {
-		return fmt.Errorf("listing pinned beads: %w", err)
-	}
-
-	// For town-level roles (mayor, deacon), scan all rigs if nothing found locally
-	if len(pinnedBeads) == 0 && isTownLevelRole(target) {
-		pinnedBeads = scanAllRigsForPinnedBeads(townRoot, target)
-	}
-
 	// Build status info
 	status := MoleculeStatusInfo{
-		Target:  target,
-		Role:    string(roleCtx.Role),
-		HasWork: len(pinnedBeads) > 0,
+		Target: target,
+		Role:   string(roleCtx.Role),
 	}
 
-	if len(pinnedBeads) > 0 {
-		// Take the first pinned bead (agents typically have one pinned bead)
-		status.PinnedBead = pinnedBeads[0]
+	// NEW: Try to find agent bead and read hook slot (gt-lisj6)
+	// This is the preferred method - agent beads have a hook_bead field
+	agentBeadID := buildAgentBeadID(target, roleCtx.Role)
+	var hookBead *beads.Issue
+
+	if agentBeadID != "" {
+		// Try to fetch the agent bead
+		agentBead, err := b.Show(agentBeadID)
+		if err == nil && agentBead != nil && agentBead.Type == "agent" {
+			status.AgentBeadID = agentBeadID
+
+			// Parse hook_bead from the agent bead's description
+			agentFields := ParseAgentBeadFields(agentBead.Description)
+			if agentFields != nil && agentFields.HookBead != "" {
+				// Fetch the bead on the hook
+				hookBead, err = b.Show(agentFields.HookBead)
+				if err != nil {
+					// Hook bead referenced but not found - report error but continue
+					hookBead = nil
+				}
+			}
+		}
+		// If agent bead not found or not an agent type, fall through to legacy approach
+	}
+
+	// If we found a hook bead via agent bead, use it
+	if hookBead != nil {
+		status.HasWork = true
+		status.PinnedBead = hookBead
 
 		// Check for attached molecule
-		attachment := beads.ParseAttachmentFields(pinnedBeads[0])
+		attachment := beads.ParseAttachmentFields(hookBead)
 		if attachment != nil {
 			status.AttachedMolecule = attachment.AttachedMolecule
 			status.AttachedAt = attachment.AttachedAt
 			status.AttachedArgs = attachment.AttachedArgs
 
-			// Check if it's a wisp (look for wisp indicator in description)
-			status.IsWisp = strings.Contains(pinnedBeads[0].Description, "wisp: true") ||
-				strings.Contains(pinnedBeads[0].Description, "is_wisp: true")
+			// Check if it's a wisp
+			status.IsWisp = strings.Contains(hookBead.Description, "wisp: true") ||
+				strings.Contains(hookBead.Description, "is_wisp: true")
 
 			// Get progress if there's an attached molecule
 			if attachment.AttachedMolecule != "" {
 				progress, _ := getMoleculeProgressInfo(b, attachment.AttachedMolecule)
 				status.Progress = progress
-
-				// Determine next action
 				status.NextAction = determineNextAction(status)
+			}
+		}
+	} else {
+		// FALLBACK: Legacy pinned-query approach (for agents without agent beads)
+		pinnedBeads, err := b.List(beads.ListOptions{
+			Status:   beads.StatusPinned,
+			Assignee: target,
+			Priority: -1,
+		})
+		if err != nil {
+			return fmt.Errorf("listing pinned beads: %w", err)
+		}
+
+		// For town-level roles (mayor, deacon), scan all rigs if nothing found locally
+		if len(pinnedBeads) == 0 && isTownLevelRole(target) {
+			pinnedBeads = scanAllRigsForPinnedBeads(townRoot, target)
+		}
+
+		status.HasWork = len(pinnedBeads) > 0
+
+		if len(pinnedBeads) > 0 {
+			// Take the first pinned bead
+			status.PinnedBead = pinnedBeads[0]
+
+			// Check for attached molecule
+			attachment := beads.ParseAttachmentFields(pinnedBeads[0])
+			if attachment != nil {
+				status.AttachedMolecule = attachment.AttachedMolecule
+				status.AttachedAt = attachment.AttachedAt
+				status.AttachedArgs = attachment.AttachedArgs
+
+				// Check if it's a wisp
+				status.IsWisp = strings.Contains(pinnedBeads[0].Description, "wisp: true") ||
+					strings.Contains(pinnedBeads[0].Description, "is_wisp: true")
+
+				// Get progress if there's an attached molecule
+				if attachment.AttachedMolecule != "" {
+					progress, _ := getMoleculeProgressInfo(b, attachment.AttachedMolecule)
+					status.Progress = progress
+					status.NextAction = determineNextAction(status)
+				}
 			}
 		}
 	}
