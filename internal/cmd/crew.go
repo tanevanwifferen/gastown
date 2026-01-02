@@ -239,27 +239,29 @@ var crewPrevCmd = &cobra.Command{
 }
 
 var crewStartCmd = &cobra.Command{
-	Use:   "start [name...]",
-	Short: "Start crew workspace(s) (creates if needed)",
-	Long: `Start one or more crew workspaces, creating them if they don't exist.
+	Use:   "start <rig> [name]",
+	Short: "Start crew worker(s) in a rig",
+	Long: `Start crew workers in a rig, creating workspaces if they don't exist.
 
-This is an alias for 'gt start crew'. It combines 'gt crew add' and 'gt crew at --detached'.
+Takes the rig name as the first argument. Optionally specify a crew member name
+to start just that worker, or use --all to start all crew members in the rig.
+
 The crew session starts in the background with Claude running and ready.
 
-The name can include the rig in slash format (e.g., greenplace/joe).
-If not specified, the rig is inferred from the current directory.
-
-Role Discovery:
-  If no name is provided, attempts to detect the crew workspace from the
-  current directory. If you're in <rig>/crew/<name>/, it will start that
-  workspace automatically.
-
 Examples:
-  gt crew start joe                         # Start joe in current rig
-  gt crew start greenplace/joe                 # Start joe in gastown rig
-  gt crew start beads/grip beads/fang       # Start multiple crew members
-  gt crew start joe --rig beads             # Start joe in beads rig
-  gt crew start                             # Auto-detect from cwd`,
+  gt crew start gastown joe       # Start joe in gastown rig
+  gt crew start gastown --all     # Start all crew in gastown rig
+  gt crew start beads             # Error: specify name or --all
+  gt crew start beads grip fang   # Start grip and fang in beads rig`,
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument: the rig name")
+		}
+		if len(args) == 1 && !crewAll {
+			return fmt.Errorf("specify a crew member name or use --all to start all crew in the rig")
+		}
+		return nil
+	},
 	RunE: runCrewStart,
 }
 
@@ -294,7 +296,7 @@ func init() {
 	crewRestartCmd.Flags().BoolVar(&crewAll, "all", false, "Restart all running crew sessions")
 	crewRestartCmd.Flags().BoolVar(&crewDryRun, "dry-run", false, "Show what would be restarted without restarting")
 
-	crewStartCmd.Flags().StringVar(&crewRig, "rig", "", "Rig to use")
+	crewStartCmd.Flags().BoolVar(&crewAll, "all", false, "Start all crew members in the rig")
 	crewStartCmd.Flags().StringVar(&crewAccount, "account", "", "Claude Code account handle to use")
 
 	// Add subcommands

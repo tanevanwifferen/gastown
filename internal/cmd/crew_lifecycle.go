@@ -216,46 +216,55 @@ func runCrewRefresh(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runCrewStart is an alias for runStartCrew, handling multiple input formats.
-// It supports: "name", "rig/name", "rig/crew/name" formats, or auto-detection from cwd.
-// Multiple names can be provided to start multiple crew members at once.
+// runCrewStart starts crew workers in a rig.
+// args[0] is the rig name (required)
+// args[1:] are crew member names (optional, or use --all flag)
 func runCrewStart(cmd *cobra.Command, args []string) error {
-	// If no args, try to detect from current directory
-	if len(args) == 0 {
-		detected, err := detectCrewFromCwd()
-		if err != nil {
-			return fmt.Errorf("could not detect crew workspace from current directory: %w\n\nUsage: gt crew start <name>", err)
-		}
-		name := detected.crewName
-		if crewRig == "" {
-			crewRig = detected.rigName
-		}
-		fmt.Printf("Detected crew workspace: %s/%s\n", detected.rigName, name)
+	rigName := args[0]
+	crewNames := args[1:]
 
-		startCrewRig = crewRig
-		startCrewAccount = crewAccount
-		return runStartCrew(cmd, []string{name})
+	// Get the rig manager and rig
+	crewMgr, r, err := getCrewManager(rigName)
+	if err != nil {
+		return err
 	}
 
-	// Process each name
-	var lastErr error
-	for _, name := range args {
-		// Handle rig/crew/name format (e.g., "gastown/crew/joe" -> "gastown/joe")
-		if strings.Contains(name, "/crew/") {
-			parts := strings.SplitN(name, "/crew/", 2)
-			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-				name = parts[0] + "/" + parts[1]
-			}
+	// If --all flag, get all crew members
+	if crewAll {
+		workers, err := crewMgr.List()
+		if err != nil {
+			return fmt.Errorf("listing crew: %w", err)
 		}
+		if len(workers) == 0 {
+			fmt.Printf("No crew members in rig %s\n", rigName)
+			return nil
+		}
+		for _, w := range workers {
+			crewNames = append(crewNames, w.Name)
+		}
+	}
 
-		// Set the start.go flags from crew.go flags before calling
-		startCrewRig = crewRig
+	// Start each crew member
+	var lastErr error
+	startedCount := 0
+	for _, name := range crewNames {
+		// Set the start.go flags before calling runStartCrew
+		startCrewRig = rigName
 		startCrewAccount = crewAccount
 
-		if err := runStartCrew(cmd, []string{name}); err != nil {
-			fmt.Printf("Error starting %s: %v\n", name, err)
+		// Use rig/name format for runStartCrew
+		fullName := rigName + "/" + name
+		if err := runStartCrew(cmd, []string{fullName}); err != nil {
+			fmt.Printf("Error starting %s/%s: %v\n", rigName, name, err)
 			lastErr = err
+		} else {
+			startedCount++
 		}
+	}
+
+	if startedCount > 0 {
+		fmt.Printf("\n%s Started %d crew member(s) in %s\n",
+			style.Bold.Render("✓"), startedCount, r.Name)
 	}
 
 	return lastErr
