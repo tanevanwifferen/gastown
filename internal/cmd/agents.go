@@ -35,6 +35,7 @@ type AgentSession struct {
 	Type      AgentType
 	Rig       string // For rig-specific agents
 	AgentName string // e.g., crew name, polecat name
+	Town      string // For mayor/deacon only (town name from session)
 }
 
 // AgentTypeColors maps agent types to tmux color codes.
@@ -135,13 +136,16 @@ func categorizeSession(name string) *AgentSession {
 	session := &AgentSession{Name: name}
 	suffix := strings.TrimPrefix(name, "gt-")
 
-	// Town-level agents
-	if suffix == "mayor" {
+	// Town-level agents: gt-{town}-mayor, gt-{town}-deacon
+	// Check if suffix ends with -mayor or -deacon (new format)
+	if strings.HasSuffix(suffix, "-mayor") {
 		session.Type = AgentMayor
+		session.Town = strings.TrimSuffix(suffix, "-mayor")
 		return session
 	}
-	if suffix == "deacon" {
+	if strings.HasSuffix(suffix, "-deacon") {
 		session.Type = AgentDeacon
+		session.Town = strings.TrimSuffix(suffix, "-deacon")
 		return session
 	}
 

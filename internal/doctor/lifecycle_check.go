@@ -7,6 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/steveyegge/gastown/internal/session"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // LifecycleHygieneCheck detects and cleans up stale lifecycle state.
@@ -139,7 +142,7 @@ func (c *LifecycleHygieneCheck) checkStateFiles(ctx *CheckContext) int {
 			if strings.HasPrefix(key, "requesting_") {
 				if boolVal, ok := val.(bool); ok && boolVal {
 					// Found a stuck flag - verify session is actually healthy
-					if c.isSessionHealthy(sf.identity) {
+					if c.isSessionHealthy(sf.identity, ctx.TownRoot) {
 						c.stuckStateFiles = append(c.stuckStateFiles, stuckState{
 							stateFile: sf.path,
 							identity:  sf.identity,
@@ -225,8 +228,8 @@ func (c *LifecycleHygieneCheck) findStateFiles(townRoot string) []stateFileInfo 
 }
 
 // isSessionHealthy checks if the tmux session for this identity exists and is running.
-func (c *LifecycleHygieneCheck) isSessionHealthy(identity string) bool {
-	sessionName := identityToSessionName(identity)
+func (c *LifecycleHygieneCheck) isSessionHealthy(identity, townRoot string) bool {
+	sessionName := identityToSessionName(identity, townRoot)
 	if sessionName == "" {
 		return false
 	}
@@ -237,10 +240,15 @@ func (c *LifecycleHygieneCheck) isSessionHealthy(identity string) bool {
 }
 
 // identityToSessionName converts an identity to its tmux session name.
-func identityToSessionName(identity string) string {
+func identityToSessionName(identity, townRoot string) string {
 	switch identity {
 	case "mayor":
-		return "gt-mayor"
+		if townRoot != "" {
+			if townName, err := workspace.GetTownName(townRoot); err == nil {
+				return session.MayorSessionName(townName)
+			}
+		}
+		return "" // Cannot generate session name without town root
 	default:
 		if strings.HasSuffix(identity, "-witness") ||
 			strings.HasSuffix(identity, "-refinery") ||

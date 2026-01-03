@@ -14,6 +14,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/templates"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Common errors
@@ -794,12 +795,18 @@ func (m *Manager) createRoleCLAUDEmd(workspacePath string, role string, rigName 
 		return err
 	}
 
+	// Get town name for session names
+	townName, _ := workspace.GetTownName(m.townRoot)
+
 	data := templates.RoleData{
-		Role:     role,
-		RigName:  rigName,
-		TownRoot: m.townRoot,
-		WorkDir:  workspacePath,
-		Polecat:  workerName, // Used for crew member name as well
+		Role:          role,
+		RigName:       rigName,
+		TownRoot:      m.townRoot,
+		TownName:      townName,
+		WorkDir:       workspacePath,
+		Polecat:       workerName, // Used for crew member name as well
+		MayorSession:  fmt.Sprintf("gt-%s-mayor", townName),
+		DeaconSession: fmt.Sprintf("gt-%s-deacon", townName),
 	}
 
 	content, err := tmpl.RenderRole(role, data)

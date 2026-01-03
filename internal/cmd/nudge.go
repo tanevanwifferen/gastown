@@ -120,11 +120,17 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 	t := tmux.NewTmux()
 
+	// Get session names for this town
+	townName := ""
+	if townRoot != "" {
+		townName, _ = workspace.GetTownName(townRoot)
+	}
+
 	// Expand role shortcuts to session names
-	// These shortcuts let users type "mayor" instead of "gt-mayor"
+	// These shortcuts let users type "mayor" instead of "gt-{town}-mayor"
 	switch target {
 	case "mayor":
-		target = session.MayorSessionName()
+		target = session.MayorSessionName(townName)
 	case "witness", "refinery":
 		// These need the current rig
 		roleInfo, err := GetRole()
@@ -143,8 +149,9 @@ func runNudge(cmd *cobra.Command, args []string) error {
 
 	// Special case: "deacon" target maps to the Deacon session
 	if target == "deacon" {
+		deaconSession := session.DeaconSessionName(townName)
 		// Check if Deacon session exists
-		exists, err := t.HasSession(DeaconSessionName)
+		exists, err := t.HasSession(deaconSession)
 		if err != nil {
 			return fmt.Errorf("checking deacon session: %w", err)
 		}
@@ -154,7 +161,7 @@ func runNudge(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
-		if err := t.NudgeSession(DeaconSessionName, message); err != nil {
+		if err := t.NudgeSession(deaconSession, message); err != nil {
 			return fmt.Errorf("nudging deacon: %w", err)
 		}
 
@@ -279,6 +286,9 @@ func runNudgeChannel(channelName, message string) error {
 	// Prefix message with sender
 	prefixedMessage := fmt.Sprintf("[from %s] %s", sender, message)
 
+	// Get town name for session names
+	townName, _ := workspace.GetTownName(townRoot)
+
 	// Get all running sessions for pattern matching
 	agents, err := getAgentSessions(true)
 	if err != nil {
@@ -290,7 +300,7 @@ func runNudgeChannel(channelName, message string) error {
 	seenTargets := make(map[string]bool)
 
 	for _, pattern := range patterns {
-		resolved := resolveNudgePattern(pattern, agents)
+		resolved := resolveNudgePattern(pattern, agents, townName)
 		for _, sessionName := range resolved {
 			if !seenTargets[sessionName] {
 				seenTargets[sessionName] = true
@@ -350,16 +360,17 @@ func runNudgeChannel(channelName, message string) error {
 //   - Literal: "gastown/witness" → gt-gastown-witness
 //   - Wildcard: "gastown/polecats/*" → all polecat sessions in gastown
 //   - Role: "*/witness" → all witness sessions
-//   - Special: "mayor", "deacon" → gt-mayor, gt-deacon
-func resolveNudgePattern(pattern string, agents []*AgentSession) []string {
+//   - Special: "mayor", "deacon" → gt-{town}-mayor, gt-{town}-deacon
+// townName is used to generate the correct session names for mayor/deacon.
+func resolveNudgePattern(pattern string, agents []*AgentSession, townName string) []string {
 	var results []string
 
 	// Handle special cases
 	switch pattern {
 	case "mayor":
-		return []string{session.MayorSessionName()}
+		return []string{session.MayorSessionName(townName)}
 	case "deacon":
-		return []string{DeaconSessionName}
+		return []string{session.DeaconSessionName(townName)}
 	}
 
 	// Parse pattern
@@ -427,8 +438,11 @@ func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string
 		return true, "", nil
 	}
 
+	// Get town name for session name generation
+	townName, _ := workspace.GetTownName(townRoot)
+
 	// Try to determine agent bead ID from address
-	agentBeadID := addressToAgentBeadID(targetAddress)
+	agentBeadID := addressToAgentBeadID(targetAddress, townName)
 	if agentBeadID == "" {
 		// Can't determine agent bead, allow the nudge
 		return true, "", nil
@@ -447,18 +461,19 @@ func shouldNudgeTarget(townRoot, targetAddress string, force bool) (bool, string
 
 // addressToAgentBeadID converts a target address to an agent bead ID.
 // Examples:
-//   - "mayor" -> "gt-mayor" (or similar)
+//   - "mayor" -> "gt-{town}-mayor"
+//   - "deacon" -> "gt-{town}-deacon"
 //   - "gastown/witness" -> "gt-gastown-witness"
 //   - "gastown/alpha" -> "gt-gastown-polecat-alpha"
 //
 // Returns empty string if the address cannot be converted.
-func addressToAgentBeadID(address string) string {
+func addressToAgentBeadID(address, townName string) string {
 	// Handle special cases
 	switch address {
 	case "mayor":
-		return "gt-mayor"
+		return session.MayorSessionName(townName)
 	case "deacon":
-		return "gt-deacon"
+		return session.DeaconSessionName(townName)
 	}
 
 	// Parse rig/role format

@@ -20,7 +20,9 @@ import (
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/feed"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // Daemon is the town-level background service.
@@ -188,11 +190,19 @@ func (d *Daemon) heartbeat(state *State) {
 	d.logger.Printf("Heartbeat complete (#%d)", state.HeartbeatCount)
 }
 
-// DeaconSessionName is the tmux session name for the Deacon.
-const DeaconSessionName = "gt-deacon"
-
 // DeaconRole is the role name for the Deacon's handoff bead.
 const DeaconRole = "deacon"
+
+// getDeaconSessionName returns the Deacon session name for the daemon's town.
+func (d *Daemon) getDeaconSessionName() string {
+	townName, err := workspace.GetTownName(d.config.TownRoot)
+	if err != nil {
+		// Fallback to legacy name if town config can't be loaded
+		d.logger.Printf("Warning: failed to get town name: %v, using fallback", err)
+		return "gt-deacon"
+	}
+	return session.DeaconSessionName(townName)
+}
 
 // ensureBootRunning spawns Boot to triage the Deacon.
 // Boot is a fresh-each-tick watchdog that decides whether to start/wake/nudge
@@ -238,7 +248,7 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 	}
 
 	// Simple check: is Deacon session alive?
-	hasDeacon, err := d.tmux.HasSession(DeaconSessionName)
+	hasDeacon, err := d.tmux.HasSession(d.getDeaconSessionName())
 	if err != nil {
 		d.logger.Printf("Error checking Deacon session: %v", err)
 		status.LastAction = "error"
@@ -265,7 +275,7 @@ func (d *Daemon) runDegradedBootTriage(b *boot.Boot) {
 // The Deacon is the system's heartbeat - it must always be running.
 func (d *Daemon) ensureDeaconRunning() {
 	// Check agent bead state (ZFC: trust what agent reports)
-	beadState, beadErr := d.getAgentBeadState("gt-deacon")
+	beadState, beadErr := d.getAgentBeadState(d.getDeaconSessionName())
 	if beadErr == nil {
 		if beadState == "running" || beadState == "working" {
 			// Agent reports it's running - trust it
@@ -277,9 +287,10 @@ func (d *Daemon) ensureDeaconRunning() {
 	// Agent bead check failed or state is not running.
 	// FALLBACK: Check if tmux session is actually healthy before attempting restart.
 	// This prevents killing healthy sessions when bead state is stale or unreadable.
-	hasSession, sessionErr := d.tmux.HasSession(DeaconSessionName)
+	deaconSession := d.getDeaconSessionName()
+	hasSession, sessionErr := d.tmux.HasSession(deaconSession)
 	if sessionErr == nil && hasSession {
-		if d.tmux.IsClaudeRunning(DeaconSessionName) {
+		if d.tmux.IsClaudeRunning(deaconSession) {
 			d.logger.Println("Deacon session healthy (Claude running), skipping restart despite stale bead")
 			return
 		}
@@ -291,19 +302,20 @@ func (d *Daemon) ensureDeaconRunning() {
 	// Create session in deacon directory (ensures correct CLAUDE.md is loaded)
 	// Use EnsureSessionFresh to handle zombie sessions that exist but have dead Claude
 	deaconDir := filepath.Join(d.config.TownRoot, "deacon")
-	if err := d.tmux.EnsureSessionFresh(DeaconSessionName, deaconDir); err != nil {
+	sessionName := d.getDeaconSessionName()
+	if err := d.tmux.EnsureSessionFresh(sessionName, deaconDir); err != nil {
 		d.logger.Printf("Error creating Deacon session: %v", err)
 		return
 	}
 
 	// Set environment (non-fatal: session works without these)
-	_ = d.tmux.SetEnvironment(DeaconSessionName, "GT_ROLE", "deacon")
-	_ = d.tmux.SetEnvironment(DeaconSessionName, "BD_ACTOR", "deacon")
+	_ = d.tmux.SetEnvironment(sessionName, "GT_ROLE", "deacon")
+	_ = d.tmux.SetEnvironment(sessionName, "BD_ACTOR", "deacon")
 
 	// Launch Claude directly (no shell respawn loop)
 	// The daemon will detect if Claude exits and restart it on next heartbeat
 	// Export GT_ROLE and BD_ACTOR so Claude inherits them (tmux SetEnvironment doesn't export to processes)
-	if err := d.tmux.SendKeys(DeaconSessionName, config.BuildAgentStartupCommand("deacon", "deacon", "", "")); err != nil {
+	if err := d.tmux.SendKeys(sessionName, config.BuildAgentStartupCommand("deacon", "deacon", "", "")); err != nil {
 		d.logger.Printf("Error launching Claude in Deacon session: %v", err)
 		return
 	}
@@ -331,8 +343,10 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 	d.logger.Printf("Deacon heartbeat is stale (%s old), checking session...", age.Round(time.Minute))
 
+	sessionName := d.getDeaconSessionName()
+
 	// Check if session exists
-	hasSession, err := d.tmux.HasSession(DeaconSessionName)
+	hasSession, err := d.tmux.HasSession(sessionName)
 	if err != nil {
 		d.logger.Printf("Error checking Deacon session: %v", err)
 		return
@@ -347,14 +361,14 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	if age > 30*time.Minute {
 		// Very stuck - restart the session
 		d.logger.Printf("Deacon stuck for %s - restarting session", age.Round(time.Minute))
-		if err := d.tmux.KillSession(DeaconSessionName); err != nil {
+		if err := d.tmux.KillSession(sessionName); err != nil {
 			d.logger.Printf("Error killing stuck Deacon: %v", err)
 		}
 		// ensureDeaconRunning will be called next heartbeat to restart
 	} else {
 		// Stuck but not critically - nudge to wake up
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
-		if err := d.tmux.NudgeSession(DeaconSessionName, "HEALTH_CHECK: heartbeat stale, respond to confirm responsiveness"); err != nil {
+		if err := d.tmux.NudgeSession(sessionName, "HEALTH_CHECK: heartbeat stale, respond to confirm responsiveness"); err != nil {
 			d.logger.Printf("Error nudging stuck Deacon: %v", err)
 		}
 	}

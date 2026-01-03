@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/steveyegge/gastown/internal/config"
 )
 
 // ErrNotFound indicates no workspace was found.
@@ -125,4 +127,36 @@ func IsWorkspace(dir string) (bool, error) {
 	}
 
 	return false, nil
+}
+
+// GetTownName loads the town name from the workspace's town.json config.
+// This is used for generating unique tmux session names that avoid collisions
+// when running multiple Gas Town instances.
+func GetTownName(townRoot string) (string, error) {
+	townConfigPath := filepath.Join(townRoot, PrimaryMarker)
+	townConfig, err := config.LoadTownConfig(townConfigPath)
+	if err != nil {
+		return "", fmt.Errorf("loading town config: %w", err)
+	}
+	return townConfig.Name, nil
+}
+
+// GetTownNameFromCwd locates the town root from the current working directory
+// and returns the town name from its configuration.
+func GetTownNameFromCwd() (string, error) {
+	townRoot, err := FindFromCwdOrError()
+	if err != nil {
+		return "", err
+	}
+	return GetTownName(townRoot)
+}
+
+// MustGetTownName returns the town name or panics if it cannot be loaded.
+// Use sparingly - prefer GetTownName with proper error handling.
+func MustGetTownName(townRoot string) string {
+	name, err := GetTownName(townRoot)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get town name: %v", err))
+	}
+	return name
 }

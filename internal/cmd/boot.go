@@ -277,7 +277,10 @@ func runDegradedTriage(b *boot.Boot) (action, target string, err error) {
 	tm := b.Tmux()
 
 	// Check if Deacon session exists
-	deaconSession := "gt-deacon"
+	deaconSession, err := getDeaconSessionName()
+	if err != nil {
+		return "error", "deacon", fmt.Errorf("getting deacon session name: %w", err)
+	}
 	hasDeacon, err := tm.HasSession(deaconSession)
 	if err != nil {
 		return "error", "deacon", fmt.Errorf("checking deacon session: %w", err)

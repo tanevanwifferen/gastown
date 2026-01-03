@@ -645,6 +645,10 @@ func discoverRigHooks(r *rig.Rig, crews []string) []AgentHookInfo {
 // allAgentBeads is a preloaded map of agent beads for O(1) lookup.
 // allHookBeads is a preloaded map of hook beads for O(1) lookup.
 func discoverGlobalAgents(allSessions map[string]bool, allAgentBeads map[string]*beads.Issue, allHookBeads map[string]*beads.Issue, mailRouter *mail.Router, skipMail bool) []AgentRuntime {
+	// Get session names dynamically
+	mayorSession, _ := getMayorSessionName()
+	deaconSession, _ := getDeaconSessionName()
+
 	// Define agents to discover
 	agentDefs := []struct {
 		name    string
@@ -653,8 +657,8 @@ func discoverGlobalAgents(allSessions map[string]bool, allAgentBeads map[string]
 		role    string
 		beadID  string
 	}{
-		{"mayor", "mayor/", MayorSessionName, "coordinator", "gt-mayor"},
-		{"deacon", "deacon/", DeaconSessionName, "health-check", "gt-deacon"},
+		{"mayor", "mayor/", mayorSession, "coordinator", mayorSession},
+		{"deacon", "deacon/", deaconSession, "health-check", deaconSession},
 	}
 
 	agents := make([]AgentRuntime, len(agentDefs))

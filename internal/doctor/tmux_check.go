@@ -5,7 +5,9 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // LinkedPaneCheck detects tmux sessions that share panes,
@@ -83,11 +85,17 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	// Cache for Fix (exclude gt-mayor since we don't want to kill it)
+	// Cache for Fix (exclude mayor session since we don't want to kill it)
+	// Get dynamic mayor session name
+	var mayorSession string
+	if townName, err := workspace.GetTownName(ctx.TownRoot); err == nil {
+		mayorSession = session.MayorSessionName(townName)
+	}
+
 	c.linkedSessions = nil
-	for session := range linkedSessionSet {
-		if session != "gt-mayor" {
-			c.linkedSessions = append(c.linkedSessions, session)
+	for sess := range linkedSessionSet {
+		if mayorSession == "" || sess != mayorSession {
+			c.linkedSessions = append(c.linkedSessions, sess)
 		}
 	}
 
@@ -108,7 +116,7 @@ func (c *LinkedPaneCheck) Run(ctx *CheckContext) *CheckResult {
 	}
 }
 
-// Fix kills sessions with linked panes (except gt-mayor).
+// Fix kills sessions with linked panes (except mayor session).
 // The daemon will recreate them with independent panes.
 func (c *LinkedPaneCheck) Fix(ctx *CheckContext) error {
 	if len(c.linkedSessions) == 0 {

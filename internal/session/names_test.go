@@ -8,18 +8,42 @@ import (
 )
 
 func TestMayorSessionName(t *testing.T) {
-	want := "gt-mayor"
-	got := MayorSessionName()
-	if got != want {
-		t.Errorf("MayorSessionName() = %q, want %q", got, want)
+	tests := []struct {
+		townName string
+		want     string
+	}{
+		{"ai", "gt-ai-mayor"},
+		{"alpha", "gt-alpha-mayor"},
+		{"gastown", "gt-gastown-mayor"},
+		{"", "gt--mayor"}, // empty town name
+	}
+	for _, tt := range tests {
+		t.Run(tt.townName, func(t *testing.T) {
+			got := MayorSessionName(tt.townName)
+			if got != tt.want {
+				t.Errorf("MayorSessionName(%q) = %q, want %q", tt.townName, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestDeaconSessionName(t *testing.T) {
-	want := "gt-deacon"
-	got := DeaconSessionName()
-	if got != want {
-		t.Errorf("DeaconSessionName() = %q, want %q", got, want)
+	tests := []struct {
+		townName string
+		want     string
+	}{
+		{"ai", "gt-ai-deacon"},
+		{"alpha", "gt-alpha-deacon"},
+		{"gastown", "gt-gastown-deacon"},
+		{"", "gt--deacon"}, // empty town name
+	}
+	for _, tt := range tests {
+		t.Run(tt.townName, func(t *testing.T) {
+			got := DeaconSessionName(tt.townName)
+			if got != tt.want {
+				t.Errorf("DeaconSessionName(%q) = %q, want %q", tt.townName, got, tt.want)
+			}
+		})
 	}
 }
 

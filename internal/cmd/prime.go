@@ -19,6 +19,7 @@ import (
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/lock"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -304,12 +305,18 @@ func outputPrimeContext(ctx RoleContext) error {
 	}
 
 	// Build template data
+	// Get town name for session names
+	townName, _ := workspace.GetTownName(ctx.TownRoot)
+
 	data := templates.RoleData{
-		Role:     roleName,
-		RigName:  ctx.Rig,
-		TownRoot: ctx.TownRoot,
-		WorkDir:  ctx.WorkDir,
-		Polecat:  ctx.Polecat,
+		Role:          roleName,
+		RigName:       ctx.Rig,
+		TownRoot:      ctx.TownRoot,
+		TownName:      townName,
+		WorkDir:       ctx.WorkDir,
+		Polecat:       ctx.Polecat,
+		MayorSession:  session.MayorSessionName(townName),
+		DeaconSession: session.DeaconSessionName(townName),
 	}
 
 	// Render and output

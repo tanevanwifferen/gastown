@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/deps"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -252,10 +253,16 @@ func createMayorCLAUDEmd(hqRoot, townRoot string) error {
 		return err
 	}
 
+	// Get town name for session names
+	townName, _ := workspace.GetTownName(townRoot)
+
 	data := templates.RoleData{
-		Role:     "mayor",
-		TownRoot: townRoot,
-		WorkDir:  hqRoot,
+		Role:          "mayor",
+		TownRoot:      townRoot,
+		TownName:      townName,
+		WorkDir:       hqRoot,
+		MayorSession:  session.MayorSessionName(townName),
+		DeaconSession: session.DeaconSessionName(townName),
 	}
 
 	content, err := tmpl.RenderRole("mayor", data)

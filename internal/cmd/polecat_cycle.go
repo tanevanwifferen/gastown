@@ -88,8 +88,16 @@ func parsePolecatSessionName(sessionName string) (rigName, polecatName string, o
 		return "", "", false
 	}
 
-	// Exclude town-level sessions
-	if sessionName == "gt-mayor" || sessionName == "gt-deacon" {
+	// Exclude town-level sessions by exact match
+	mayorSession, _ := getMayorSessionName()
+	deaconSession, _ := getDeaconSessionName()
+	if sessionName == mayorSession || sessionName == deaconSession {
+		return "", "", false
+	}
+
+	// Also exclude by suffix pattern (gt-{town}-mayor, gt-{town}-deacon)
+	// This handles cases where town config isn't available
+	if strings.HasSuffix(sessionName, "-mayor") || strings.HasSuffix(sessionName, "-deacon") {
 		return "", "", false
 	}
 

@@ -12,13 +12,17 @@ import (
 const Prefix = "gt-"
 
 // MayorSessionName returns the session name for the Mayor agent.
-func MayorSessionName() string {
-	return Prefix + "mayor"
+// The townName parameter allows multiple towns to run concurrently
+// without tmux session name collisions.
+func MayorSessionName(townName string) string {
+	return fmt.Sprintf("%s%s-mayor", Prefix, townName)
 }
 
 // DeaconSessionName returns the session name for the Deacon agent.
-func DeaconSessionName() string {
-	return Prefix + "deacon"
+// The townName parameter allows multiple towns to run concurrently
+// without tmux session name collisions.
+func DeaconSessionName(townName string) string {
+	return fmt.Sprintf("%s%s-deacon", Prefix, townName)
 }
 
 // WitnessSessionName returns the session name for a rig's Witness agent.

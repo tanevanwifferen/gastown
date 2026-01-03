@@ -87,12 +87,14 @@ func TestIsTownLevelAddress(t *testing.T) {
 }
 
 func TestAddressToSessionID(t *testing.T) {
+	townName := "ai"
 	tests := []struct {
 		address string
 		want    string
 	}{
-		{"mayor", "gt-mayor"},
-		{"mayor/", "gt-mayor"},
+		{"mayor", "gt-ai-mayor"},
+		{"mayor/", "gt-ai-mayor"},
+		{"deacon", "gt-ai-deacon"},
 		{"gastown/refinery", "gt-gastown-refinery"},
 		{"gastown/Toast", "gt-gastown-Toast"},
 		{"beads/witness", "gt-beads-witness"},
@@ -103,9 +105,9 @@ func TestAddressToSessionID(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.address, func(t *testing.T) {
-			got := addressToSessionID(tt.address)
+			got := addressToSessionID(tt.address, townName)
 			if got != tt.want {
-				t.Errorf("addressToSessionID(%q) = %q, want %q", tt.address, got, tt.want)
+				t.Errorf("addressToSessionID(%q, %q) = %q, want %q", tt.address, townName, got, tt.want)
 			}
 		})
 	}

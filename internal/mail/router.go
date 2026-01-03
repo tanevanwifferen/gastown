@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
+	"github.com/steveyegge/gastown/internal/workspace"
 )
 
 // ErrUnknownList indicates a mailing list name was not found in configuration.
@@ -934,7 +936,13 @@ func (r *Router) GetMailbox(address string) (*Mailbox, error) {
 // Uses send-keys to echo a visible banner to ensure notification is seen.
 // Supports mayor/, rig/polecat, and rig/refinery addresses.
 func (r *Router) notifyRecipient(msg *Message) error {
-	sessionID := addressToSessionID(msg.To)
+	// Get town name for session name generation
+	var townName string
+	if r.townRoot != "" {
+		townName, _ = workspace.GetTownName(r.townRoot)
+	}
+
+	sessionID := addressToSessionID(msg.To, townName)
 	if sessionID == "" {
 		return nil // Unable to determine session ID
 	}
@@ -951,10 +959,21 @@ func (r *Router) notifyRecipient(msg *Message) error {
 
 // addressToSessionID converts a mail address to a tmux session ID.
 // Returns empty string if address format is not recognized.
-func addressToSessionID(address string) string {
+func addressToSessionID(address, townName string) string {
 	// Mayor address: "mayor/" or "mayor"
 	if strings.HasPrefix(address, "mayor") {
-		return "gt-mayor"
+		if townName != "" {
+			return session.MayorSessionName(townName)
+		}
+		return "" // Cannot generate session name without town name
+	}
+
+	// Deacon address: "deacon/" or "deacon"
+	if strings.HasPrefix(address, "deacon") {
+		if townName != "" {
+			return session.DeaconSessionName(townName)
+		}
+		return "" // Cannot generate session name without town name
 	}
 
 	// Rig-based address: "rig/target"

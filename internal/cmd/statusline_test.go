@@ -31,8 +31,8 @@ func TestCategorizeSessionRig(t *testing.T) {
 		{"gt-a-b", "a"}, // minimum valid
 
 		// Town-level agents (no rig)
-		{"gt-mayor", ""},
-		{"gt-deacon", ""},
+		{"gt-ai-mayor", ""},
+		{"gt-ai-deacon", ""},
 	}
 
 	for _, tt := range tests {
@@ -68,8 +68,8 @@ func TestCategorizeSessionType(t *testing.T) {
 		{"gt-myrig-crew-user", AgentCrew},
 
 		// Town-level agents
-		{"gt-mayor", AgentMayor},
-		{"gt-deacon", AgentDeacon},
+		{"gt-ai-mayor", AgentMayor},
+		{"gt-ai-deacon", AgentDeacon},
 	}
 
 	for _, tt := range tests {
