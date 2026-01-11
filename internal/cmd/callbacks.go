@@ -3,6 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -34,6 +36,9 @@ var (
 	// SLING_REQUEST: <bead-id> - request to sling work
 	patternSling = regexp.MustCompile(`^SLING_REQUEST:\s+(\S+)`)
 
+	// PULL_MAIN: <branch> merged to <target> - refinery merged code, mayor should pull
+	patternPullMain = regexp.MustCompile(`^PULL_MAIN:\s+(.+)`)
+
 	// NOTE: WITNESS_REPORT and REFINERY_REPORT removed.
 	// Witnesses and Refineries handle their duties autonomously.
 	// They only escalate genuine problems, not routine status updates.
@@ -49,6 +54,7 @@ const (
 	CallbackHelp           CallbackType = "help"
 	CallbackEscalation     CallbackType = "escalation"
 	CallbackSling          CallbackType = "sling"
+	CallbackPullMain       CallbackType = "pull_main"
 	CallbackUnknown        CallbackType = "unknown"
 	// NOTE: CallbackWitnessReport and CallbackRefineryReport removed.
 	// Routine status reports are no longer sent to Mayor.
@@ -95,6 +101,7 @@ its type:
   HELP:              - Route to human or handle if possible
   ESCALATION:        - Log and route to human
   SLING_REQUEST:     - Spawn polecat for the work
+  PULL_MAIN:         - Pull latest changes to mayor's rig after merge
 
 Note: Witnesses and Refineries handle routine operations autonomously.
 They only send escalations for genuine problems, not status reports.
@@ -236,6 +243,10 @@ func processCallback(townRoot string, msg *mail.Message, dryRun bool) CallbackRe
 		result.Action, result.Error = handleSling(townRoot, msg, dryRun)
 		result.Handled = result.Error == nil
 
+	case CallbackPullMain:
+		result.Action, result.Error = handlePullMain(townRoot, msg, dryRun)
+		result.Handled = result.Error == nil
+
 	default:
 		result.Action = "unknown message type, skipped"
 		result.Handled = false
@@ -267,6 +278,8 @@ func classifyCallback(subject string) CallbackType {
 		return CallbackEscalation
 	case patternSling.MatchString(subject):
 		return CallbackSling
+	case patternPullMain.MatchString(subject):
+		return CallbackPullMain
 	default:
 		return CallbackUnknown
 	}
@@ -477,6 +490,58 @@ func handleSling(townRoot string, msg *mail.Message, dryRun bool) (string, error
 	// executing the sling command based on this request.
 	return fmt.Sprintf("logged sling request: %s to %s (execute with: gt sling %s %s)",
 		beadID, targetRig, beadID, targetRig), nil
+}
+
+// handlePullMain processes a PULL_MAIN callback from Refinery.
+// This pulls the latest changes to the mayor's rig after a merge.
+func handlePullMain(townRoot string, msg *mail.Message, dryRun bool) (string, error) {
+	// Extract rig name from sender (format: "<rig>/refinery")
+	rigName := ""
+	if parts := strings.Split(msg.From, "/"); len(parts) >= 1 {
+		rigName = parts[0]
+	}
+
+	// Extract target branch from body
+	targetBranch := "main"
+	for _, line := range strings.Split(msg.Body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "Target:") {
+			targetBranch = strings.TrimSpace(strings.TrimPrefix(line, "Target:"))
+		}
+	}
+
+	if rigName == "" {
+		return "", fmt.Errorf("could not determine rig from sender: %s", msg.From)
+	}
+
+	// Mayor's rig is at <townRoot>/<rig>/mayor/rig
+	mayorRigPath := filepath.Join(townRoot, rigName, "mayor", "rig")
+	if _, err := os.Stat(mayorRigPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("mayor rig path not found: %s", mayorRigPath)
+	}
+
+	if dryRun {
+		return fmt.Sprintf("would pull %s in %s", targetBranch, mayorRigPath), nil
+	}
+
+	// Fetch and pull the latest changes
+	fetchCmd := exec.Command("git", "fetch", "origin")
+	fetchCmd.Dir = mayorRigPath
+	if err := fetchCmd.Run(); err != nil {
+		// Fetch failed but continue with pull
+	}
+
+	pullCmd := exec.Command("git", "pull", "--rebase", "origin", targetBranch)
+	pullCmd.Dir = mayorRigPath
+	output, err := pullCmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git pull failed: %v (output: %s)", err, string(output))
+	}
+
+	// Log the pull
+	logCallback(townRoot, fmt.Sprintf("pull_main: pulled %s in %s from %s", targetBranch, mayorRigPath, msg.From))
+
+	return fmt.Sprintf("pulled %s in mayor rig", targetBranch), nil
 }
 
 // logCallback logs a callback processing event to the town log.

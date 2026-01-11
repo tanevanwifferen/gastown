@@ -571,6 +571,32 @@ func (e *Engineer) handleSuccessFromQueue(mr *mrqueue.MR, result ProcessResult) 
 
 	// 4. Log success
 	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
+
+	// 5. Notify Mayor to pull the new changes
+	if err := e.notifyMayorPullMain(mr, result); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to notify mayor to pull: %v\n", err)
+	}
+}
+
+// notifyMayorPullMain sends a message to Mayor to trigger git pull after merge.
+// This ensures Mayor's rig clone always has the latest code from main.
+func (e *Engineer) notifyMayorPullMain(mr *mrqueue.MR, result ProcessResult) error {
+	msg := &mail.Message{
+		From:    fmt.Sprintf("%s/refinery", e.rig.Name),
+		To:      "mayor/",
+		Subject: fmt.Sprintf("PULL_MAIN: %s merged to %s", mr.Branch, mr.Target),
+		Body: fmt.Sprintf(`Code merged to %s - please pull latest.
+
+Branch: %s
+Target: %s
+Commit: %s
+Issue: %s
+
+Run: git pull origin %s`,
+			mr.Target, mr.Branch, mr.Target, result.MergeCommit, mr.SourceIssue, mr.Target),
+		Priority: mail.PriorityNormal,
+	}
+	return e.router.Send(msg)
 }
 
 // handleFailureFromQueue handles a failed merge from wisp queue.
