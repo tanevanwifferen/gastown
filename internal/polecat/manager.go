@@ -261,6 +261,12 @@ func (m *Manager) AddWithOptions(name string, opts AddOptions) (*Polecat, error)
 		return nil, fmt.Errorf("finding repo base: %w", err)
 	}
 
+	// Fetch latest from origin to ensure we start from fresh remote state.
+	// This prevents polecats from spawning with stale code when origin/<branch>
+	// hasn't been updated locally. Non-fatal: continues if offline.
+	// See: gt-1y8 (polecat worktrees spawn on wrong branch)
+	_ = repoGit.Fetch("origin")
+
 	// Determine the start point for the new worktree
 	// Use origin/<default-branch> to ensure we start from the rig's configured branch
 	defaultBranch := "main"
