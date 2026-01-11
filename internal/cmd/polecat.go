@@ -769,7 +769,7 @@ func runPolecatGitState(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get git state from the polecat's worktree
-	state, err := getGitState(p.ClonePath)
+	state, err := getGitState(p.ClonePath, r.DefaultBranch())
 	if err != nil {
 		return fmt.Errorf("getting git state: %w", err)
 	}
@@ -821,7 +821,8 @@ func runPolecatGitState(cmd *cobra.Command, args []string) error {
 }
 
 // getGitState checks the git state of a worktree.
-func getGitState(worktreePath string) (*GitState, error) {
+// defaultBranch should be the rig-configured default branch (e.g., "main", "master").
+func getGitState(worktreePath string, defaultBranch string) (*GitState, error) {
 	state := &GitState{
 		Clean:            true,
 		UncommittedFiles: []string{},
@@ -849,16 +850,20 @@ func getGitState(worktreePath string) (*GitState, error) {
 		state.Clean = false
 	}
 
-	// Check for unpushed commits (git log origin/main..HEAD)
+	// Check for unpushed commits (git log origin/<defaultBranch>..HEAD)
 	// We check commits first, then verify if content differs.
 	// After squash merge, commits may differ but content may be identical.
-	mainRef := "origin/main"
+	mainRef := fmt.Sprintf("origin/%s", defaultBranch)
 	logCmd := exec.Command("git", "log", mainRef+"..HEAD", "--oneline")
 	logCmd.Dir = worktreePath
 	output, err = logCmd.Output()
 	if err != nil {
-		// origin/main might not exist - try origin/master
-		mainRef = "origin/master"
+		// origin/<defaultBranch> might not exist - try fallback
+		fallback := "origin/main"
+		if defaultBranch == "main" {
+			fallback = "origin/master"
+		}
+		mainRef = fallback
 		logCmd = exec.Command("git", "log", mainRef+"..HEAD", "--oneline")
 		logCmd.Dir = worktreePath
 		output, _ = logCmd.Output() // non-fatal: might be a new repo without remote tracking
@@ -960,7 +965,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	if err != nil || fields == nil {
 		// No agent bead or no cleanup_status - fall back to git check
 		// This handles polecats that haven't self-reported yet
-		gitState, gitErr := getGitState(p.ClonePath)
+		gitState, gitErr := getGitState(p.ClonePath, r.DefaultBranch())
 		if gitErr != nil {
 			status.CleanupStatus = polecat.CleanupUnknown
 			status.NeedsRecovery = true

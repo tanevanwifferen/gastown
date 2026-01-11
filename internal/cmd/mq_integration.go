@@ -239,9 +239,10 @@ func runMqIntegrationCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetching from origin: %w", err)
 	}
 
-	// 2. Create branch from origin/main
-	fmt.Printf("Creating branch '%s' from main...\n", branchName)
-	if err := g.CreateBranchFrom(branchName, "origin/main"); err != nil {
+	// 2. Create branch from origin/<defaultBranch>
+	defaultBranch := r.DefaultBranch()
+	fmt.Printf("Creating branch '%s' from %s...\n", branchName, defaultBranch)
+	if err := g.CreateBranchFrom(branchName, fmt.Sprintf("origin/%s", defaultBranch)); err != nil {
 		return fmt.Errorf("creating branch: %w", err)
 	}
 
@@ -267,7 +268,7 @@ func runMqIntegrationCreate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n%s Created integration branch\n", style.Bold.Render("✓"))
 	fmt.Printf("  Epic:   %s\n", epicID)
 	fmt.Printf("  Branch: %s\n", branchName)
-	fmt.Printf("  From:   main\n")
+	fmt.Printf("  From:   %s\n", defaultBranch)
 	fmt.Printf("\n  Future MRs for this epic's children can target:\n")
 	fmt.Printf("    gt mq submit --epic %s\n", epicID)
 
@@ -326,6 +327,7 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	// Initialize beads and git for the rig
 	bd := beads.New(r.Path)
 	g := git.NewGit(r.Path)
+	defaultBranch := r.DefaultBranch()
 
 	// Show what we're about to do
 	if mqIntegrationLandDryRun {
@@ -404,11 +406,11 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	// Dry run stops here
 	if mqIntegrationLandDryRun {
 		fmt.Printf("\n%s Dry run complete. Would perform:\n", style.Bold.Render("🔍"))
-		fmt.Printf("  1. Merge %s to main (--no-ff)\n", branchName)
+		fmt.Printf("  1. Merge %s to %s (--no-ff)\n", branchName, defaultBranch)
 		if !mqIntegrationLandSkipTests {
-			fmt.Printf("  2. Run tests on main\n")
+			fmt.Printf("  2. Run tests on %s\n", defaultBranch)
 		}
-		fmt.Printf("  3. Push main to origin\n")
+		fmt.Printf("  3. Push %s to origin\n", defaultBranch)
 		fmt.Printf("  4. Delete integration branch (local and remote)\n")
 		fmt.Printf("  5. Update epic status to closed\n")
 		return nil
@@ -429,20 +431,20 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetching from origin: %w", err)
 	}
 
-	// 4. Checkout main and merge integration branch
-	fmt.Printf("Checking out main...\n")
-	if err := g.Checkout("main"); err != nil {
-		return fmt.Errorf("checking out main: %w", err)
+	// 4. Checkout default branch and merge integration branch
+	fmt.Printf("Checking out %s...\n", defaultBranch)
+	if err := g.Checkout(defaultBranch); err != nil {
+		return fmt.Errorf("checking out %s: %w", defaultBranch, err)
 	}
 
-	// Pull latest main
-	if err := g.Pull("origin", "main"); err != nil {
+	// Pull latest default branch
+	if err := g.Pull("origin", defaultBranch); err != nil {
 		// Non-fatal if pull fails (e.g., first time)
-		fmt.Printf("  %s\n", style.Dim.Render("(pull from origin/main skipped)"))
+		fmt.Printf("  %s\n", style.Dim.Render(fmt.Sprintf("(pull from origin/%s skipped)", defaultBranch)))
 	}
 
 	// Merge with --no-ff
-	fmt.Printf("Merging %s to main...\n", branchName)
+	fmt.Printf("Merging %s to %s...\n", branchName, defaultBranch)
 	mergeMsg := fmt.Sprintf("Merge %s: %s\n\nEpic: %s", branchName, epic.Title, epicID)
 	if err := g.MergeNoFF("origin/"+branchName, mergeMsg); err != nil {
 		// Abort merge on failure (best-effort cleanup)
@@ -457,9 +459,9 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 		if testCmd != "" {
 			fmt.Printf("Running tests: %s\n", testCmd)
 			if err := runTestCommand(r.Path, testCmd); err != nil {
-				// Tests failed - reset main
-				fmt.Printf("  %s Tests failed, resetting main...\n", style.Bold.Render("✗"))
-				_ = g.Checkout("main") // best-effort: need to be on main to reset
+				// Tests failed - reset default branch
+				fmt.Printf("  %s Tests failed, resetting %s...\n", style.Bold.Render("✗"), defaultBranch)
+				_ = g.Checkout(defaultBranch) // best-effort: need to be on default branch to reset
 				resetErr := resetHard(g, "HEAD~1")
 				if resetErr != nil {
 					return fmt.Errorf("tests failed and could not reset: %w (test error: %v)", resetErr, err)
@@ -475,8 +477,8 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	}
 
 	// 6. Push to origin
-	fmt.Printf("Pushing main to origin...\n")
-	if err := g.Push("origin", "main", false); err != nil {
+	fmt.Printf("Pushing %s to origin...\n", defaultBranch)
+	if err := g.Push("origin", defaultBranch, false); err != nil {
 		// Reset on push failure
 		resetErr := resetHard(g, "HEAD~1")
 		if resetErr != nil {
@@ -512,7 +514,7 @@ func runMqIntegrationLand(cmd *cobra.Command, args []string) error {
 	// Success output
 	fmt.Printf("\n%s Successfully landed integration branch\n", style.Bold.Render("✓"))
 	fmt.Printf("  Epic:   %s\n", epicID)
-	fmt.Printf("  Branch: %s → main\n", branchName)
+	fmt.Printf("  Branch: %s → %s\n", branchName, defaultBranch)
 
 	return nil
 }

@@ -110,7 +110,7 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	if err != nil || fields == nil {
 		// No agent bead - fall back to git check
 		if infoErr == nil && polecatInfo != nil {
-			gitState, gitErr := getGitState(polecatInfo.ClonePath)
+			gitState, gitErr := getGitState(polecatInfo.ClonePath, target.r.DefaultBranch())
 			result.GitState = gitState
 			if gitErr != nil {
 				result.Reasons = append(result.Reasons, "cannot check git state")
@@ -208,7 +208,7 @@ func displayDryRunSafetyCheck(target polecatTarget) {
 	// Check 1: Git state
 	if err != nil || fields == nil {
 		if infoErr == nil && polecatInfo != nil {
-			gitState, gitErr := getGitState(polecatInfo.ClonePath)
+			gitState, gitErr := getGitState(polecatInfo.ClonePath, target.r.DefaultBranch())
 			if gitErr != nil {
 				fmt.Printf("    - Git state: %s\n", style.Warning.Render("cannot check"))
 			} else if gitState.Clean {
