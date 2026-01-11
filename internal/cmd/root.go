@@ -100,7 +100,7 @@ func warnIfTownRootOffMain() {
 // checkBeadsDependency verifies beads meets minimum version requirements.
 // Skips check for exempt commands (version, help, completion).
 // Deprecated: Use persistentPreRun instead, which calls CheckBeadsVersion.
-func checkBeadsDependency(cmd *cobra.Command, _ []string) error {
+func checkBeadsDependency(cmd *cobra.Command, args []string) error {
 	// Get the root command name being run
 	cmdName := cmd.Name()
 
@@ -142,7 +142,7 @@ func checkStaleBinaryWarning() {
 
 	if info.IsStale {
 		staleBinaryWarned = true
-		_ = os.Setenv("GT_STALE_WARNED", "1")
+		os.Setenv("GT_STALE_WARNED", "1")
 
 		msg := fmt.Sprintf("gt binary is stale (built from %s, repo at %s)",
 			version.ShortCommit(info.BinaryCommit), version.ShortCommit(info.RepoCommit))
