@@ -165,11 +165,11 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
 	}
 
-	// Ensure runtime settings exist in refinery/ (not refinery/rig/) so we don't
-	// write into the source repo. Runtime walks up the tree to find settings.
-	refineryParentDir := filepath.Join(m.rig.Path, "refinery")
+	// Ensure runtime settings exist in refineryRigDir (e.g., refinery/rig/.claude/).
+	// Claude Code 2.1.11+ stops walking at git boundaries, so hooks must be in the
+	// same directory as the .git file. The .claude/ directory is gitignored.
 	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(refineryParentDir, "refinery", runtimeConfig); err != nil {
+	if err := runtime.EnsureSettingsForRole(refineryRigDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 

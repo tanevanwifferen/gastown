@@ -146,10 +146,10 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	// Working directory
 	witnessDir := m.witnessDir()
 
-	// Ensure Claude settings exist in witness/ (not witness/rig/) so we don't
-	// write into the source repo. Claude walks up the tree to find settings.
-	witnessParentDir := filepath.Join(m.rig.Path, "witness")
-	if err := claude.EnsureSettingsForRole(witnessParentDir, "witness"); err != nil {
+	// Ensure Claude settings exist in witnessDir (e.g., witness/.claude/ or witness/rig/.claude/).
+	// Claude Code 2.1.11+ stops walking at git boundaries, so hooks must be in the
+	// same directory as the .git file. The .claude/ directory is gitignored.
+	if err := claude.EnsureSettingsForRole(witnessDir, "witness"); err != nil {
 		return fmt.Errorf("ensuring Claude settings: %w", err)
 	}
 

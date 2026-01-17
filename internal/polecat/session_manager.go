@@ -173,10 +173,10 @@ func (m *SessionManager) Start(polecat string, opts SessionStartOptions) error {
 
 	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
 
-	// Ensure runtime settings exist in polecats/ (not polecats/<name>/) so we don't
-	// write into the source repo. Runtime walks up the tree to find settings.
-	polecatsDir := filepath.Join(m.rig.Path, "polecats")
-	if err := runtime.EnsureSettingsForRole(polecatsDir, "polecat", runtimeConfig); err != nil {
+	// Ensure runtime settings exist in workDir (e.g., polecats/<name>/rig/.claude/).
+	// Claude Code 2.1.11+ stops walking at git boundaries, so hooks must be in the
+	// same directory as the .git file. The .claude/ directory is gitignored.
+	if err := runtime.EnsureSettingsForRole(workDir, "polecat", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 

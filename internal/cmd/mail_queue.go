@@ -26,6 +26,18 @@ func runMailClaim(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
 
+	// Load queue config from messaging.json
+	configPath := config.MessagingConfigPath(townRoot)
+	cfg, err := config.LoadMessagingConfig(configPath)
+	if err != nil {
+		return fmt.Errorf("loading messaging config: %w", err)
+	}
+
+	queueCfg, ok := cfg.Queues[queueName]
+	if !ok {
+		return fmt.Errorf("unknown queue: %s", queueName)
+	}
+
 	// Get caller identity
 	caller := detectSender()
 	beadsDir := beads.ResolveBeadsDir(townRoot)

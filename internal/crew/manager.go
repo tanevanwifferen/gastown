@@ -481,11 +481,10 @@ func (m *Manager) Start(name string, opts StartOptions) error {
 		}
 	}
 
-	// Ensure Claude settings exist in crew/ (not crew/<name>/) so we don't
-	// write into the source repo. Claude walks up the tree to find settings.
-	// All crew members share the same settings file.
-	crewBaseDir := filepath.Join(m.rig.Path, "crew")
-	if err := claude.EnsureSettingsForRole(crewBaseDir, "crew"); err != nil {
+	// Ensure Claude settings exist in worker.ClonePath (e.g., crew/<name>/.claude/).
+	// Claude Code 2.1.11+ stops walking at git boundaries, so hooks must be in the
+	// same directory as the .git file. The .claude/ directory is gitignored.
+	if err := claude.EnsureSettingsForRole(worker.ClonePath, "crew"); err != nil {
 		return fmt.Errorf("ensuring Claude settings: %w", err)
 	}
 

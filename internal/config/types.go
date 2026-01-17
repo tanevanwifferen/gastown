@@ -552,7 +552,8 @@ func defaultProcessNames(provider, command string) []string {
 
 func defaultReadyPromptPrefix(provider string) string {
 	if provider == "claude" {
-		return "> "
+		// Claude Code 2.1.11+ uses ❯ (U+276F) instead of >
+		return "❯ "
 	}
 	return ""
 }
