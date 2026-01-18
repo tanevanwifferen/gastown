@@ -977,6 +977,16 @@ func (t *Tmux) WaitForRuntimeReady(session string, rc *config.RuntimeConfig, tim
 		return nil
 	}
 
+	// Build list of prefixes to check (supports both old and new Claude prompts)
+	prefixes := []string{rc.Tmux.ReadyPromptPrefix}
+	// For backwards compatibility: Claude Code 2.1+ changed from "> " to "❯"
+	// Check for both to support older and newer versions
+	if rc.Tmux.ReadyPromptPrefix == "❯" {
+		prefixes = append(prefixes, "> ")
+	} else if rc.Tmux.ReadyPromptPrefix == "> " {
+		prefixes = append(prefixes, "❯")
+	}
+
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		// Capture last few lines of the pane
@@ -988,9 +998,11 @@ func (t *Tmux) WaitForRuntimeReady(session string, rc *config.RuntimeConfig, tim
 		// Look for runtime prompt indicator at start of line
 		for _, line := range lines {
 			trimmed := strings.TrimSpace(line)
-			prefix := strings.TrimSpace(rc.Tmux.ReadyPromptPrefix)
-			if strings.HasPrefix(trimmed, rc.Tmux.ReadyPromptPrefix) || (prefix != "" && trimmed == prefix) {
-				return nil
+			for _, prefix := range prefixes {
+				trimmedPrefix := strings.TrimSpace(prefix)
+				if strings.HasPrefix(trimmed, prefix) || (trimmedPrefix != "" && trimmed == trimmedPrefix) {
+					return nil
+				}
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
