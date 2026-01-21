@@ -63,7 +63,8 @@ func (m *Manager) Start(agentOverride string) error {
 			return ErrAlreadyRunning
 		}
 		// Zombie - tmux alive but Claude dead. Kill and recreate.
-		if err := t.KillSession(sessionID); err != nil {
+		// Use KillSessionWithProcesses to ensure all descendant processes are killed.
+		if err := t.KillSessionWithProcesses(sessionID); err != nil {
 			return fmt.Errorf("killing zombie session: %w", err)
 		}
 	}
@@ -79,9 +80,11 @@ func (m *Manager) Start(agentOverride string) error {
 		return fmt.Errorf("ensuring Claude settings: %w", err)
 	}
 
-	// Build startup command first
-	// Restarts are handled by daemon via ensureDeaconRunning on each heartbeat
-	startupCmd, err := config.BuildAgentStartupCommandWithAgentOverride("deacon", "", m.townRoot, "", "", agentOverride)
+	// Build startup command with initial prompt for autonomous patrol.
+	// The prompt triggers GUPP: deacon starts patrol immediately without waiting for input.
+	// This prevents the agent from sitting idle at the prompt after SessionStart hooks run.
+	initialPrompt := "I am Deacon. Start patrol: check gt hook, if empty create mol-deacon-patrol wisp and execute it."
+	startupCmd, err := config.BuildAgentStartupCommandWithAgentOverride("deacon", "", m.townRoot, "", initialPrompt, agentOverride)
 	if err != nil {
 		return fmt.Errorf("building startup command: %w", err)
 	}
@@ -152,8 +155,10 @@ func (m *Manager) Stop() error {
 	_ = t.SendKeysRaw(sessionID, "C-c")
 	time.Sleep(100 * time.Millisecond)
 
-	// Kill the session
-	if err := t.KillSession(sessionID); err != nil {
+	// Kill the session.
+	// Use KillSessionWithProcesses to ensure all descendant processes are killed.
+	// This prevents orphan bash processes from Claude's Bash tool surviving session termination.
+	if err := t.KillSessionWithProcesses(sessionID); err != nil {
 		return fmt.Errorf("killing session: %w", err)
 	}
 
