@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/steveyegge/gastown/internal/daemon"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
+	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -65,9 +68,27 @@ var daemonRunCmd = &cobra.Command{
 	RunE:   runDaemonRun,
 }
 
+var daemonRestartPatrolsCmd = &cobra.Command{
+	Use:   "restart-patrols",
+	Short: "Restart patrol agents to pick up new code/formulas",
+	Long: `Restart patrol agents (deacon, witnesses, refineries) to pick up new code or formulas.
+
+This is useful after deploying a new gt binary or updating agent formulas.
+The command kills the patrol agent sessions and the daemon will respawn them
+on the next heartbeat.
+
+Examples:
+  gt daemon restart-patrols                  # Restart all patrol agents
+  gt daemon restart-patrols --rig gastown    # Restart only gastown's witness/refinery
+  gt daemon restart-patrols --deacon-only    # Restart only the deacon`,
+	RunE: runDaemonRestartPatrols,
+}
+
 var (
-	daemonLogLines int
-	daemonLogFollow bool
+	daemonLogLines           int
+	daemonLogFollow          bool
+	restartPatrolsRig        string
+	restartPatrolsDeaconOnly bool
 )
 
 func init() {
@@ -76,9 +97,13 @@ func init() {
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonLogsCmd)
 	daemonCmd.AddCommand(daemonRunCmd)
+	daemonCmd.AddCommand(daemonRestartPatrolsCmd)
 
 	daemonLogsCmd.Flags().IntVarP(&daemonLogLines, "lines", "n", 50, "Number of lines to show")
 	daemonLogsCmd.Flags().BoolVarP(&daemonLogFollow, "follow", "f", false, "Follow log output")
+
+	daemonRestartPatrolsCmd.Flags().StringVar(&restartPatrolsRig, "rig", "", "Restart only the specified rig's witness/refinery")
+	daemonRestartPatrolsCmd.Flags().BoolVar(&restartPatrolsDeaconOnly, "deacon-only", false, "Restart only the deacon")
 
 	rootCmd.AddCommand(daemonCmd)
 }
@@ -264,4 +289,100 @@ func runDaemonRun(cmd *cobra.Command, args []string) error {
 	}
 
 	return d.Run()
+}
+
+func runDaemonRestartPatrols(cmd *cobra.Command, args []string) error {
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	tm := tmux.NewTmux()
+	if !tm.IsAvailable() {
+		return fmt.Errorf("tmux is not available")
+	}
+
+	var sessionsToKill []string
+
+	// Add deacon session unless --rig is specified without --deacon-only being false
+	if !restartPatrolsDeaconOnly || restartPatrolsRig == "" {
+		// Kill deacon if: no flags, --deacon-only, or --rig without --deacon-only
+		if restartPatrolsRig == "" || restartPatrolsDeaconOnly {
+			sessionsToKill = append(sessionsToKill, session.DeaconSessionName())
+		}
+	}
+
+	// Add rig-specific sessions unless --deacon-only
+	if !restartPatrolsDeaconOnly {
+		var rigs []string
+		if restartPatrolsRig != "" {
+			// Specific rig
+			rigs = []string{restartPatrolsRig}
+		} else {
+			// All rigs
+			rigs = getKnownRigsFromTown(townRoot)
+		}
+
+		for _, rig := range rigs {
+			sessionsToKill = append(sessionsToKill, session.WitnessSessionName(rig))
+			sessionsToKill = append(sessionsToKill, session.RefinerySessionName(rig))
+		}
+	}
+
+	if len(sessionsToKill) == 0 {
+		fmt.Println("No patrol agents to restart")
+		return nil
+	}
+
+	// Kill each session
+	killed := 0
+	for _, sess := range sessionsToKill {
+		hasSession, err := tm.HasSession(sess)
+		if err != nil {
+			fmt.Printf("  %s Error checking %s: %v\n", style.Dim.Render("?"), sess, err)
+			continue
+		}
+		if !hasSession {
+			fmt.Printf("  %s %s (not running)\n", style.Dim.Render("-"), sess)
+			continue
+		}
+
+		if err := tm.KillSessionWithProcesses(sess); err != nil {
+			fmt.Printf("  %s Error killing %s: %v\n", style.Bold.Render("✗"), sess, err)
+		} else {
+			fmt.Printf("  %s Killed %s\n", style.Bold.Render("✓"), sess)
+			killed++
+		}
+	}
+
+	if killed > 0 {
+		fmt.Printf("\n%s Killed %d session(s). Daemon will respawn on next heartbeat.\n",
+			style.Bold.Render("✓"), killed)
+	} else {
+		fmt.Println("\nNo sessions were running.")
+	}
+
+	return nil
+}
+
+// getKnownRigsFromTown returns list of registered rig names from mayor/rigs.json.
+func getKnownRigsFromTown(townRoot string) []string {
+	rigsPath := filepath.Join(townRoot, "mayor", "rigs.json")
+	data, err := os.ReadFile(rigsPath)
+	if err != nil {
+		return nil
+	}
+
+	var parsed struct {
+		Rigs map[string]interface{} `json:"rigs"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return nil
+	}
+
+	var rigs []string
+	for name := range parsed.Rigs {
+		rigs = append(rigs, name)
+	}
+	return rigs
 }
