@@ -59,6 +59,77 @@ type State struct {
 
 	// HeartbeatCount is how many heartbeats have completed.
 	HeartbeatCount int64 `json:"heartbeat_count"`
+
+	// Agents tracks per-agent state for respawn scheduling.
+	// Key is the agent identifier (e.g., "deacon", "gastown/witness").
+	Agents map[string]*AgentState `json:"agents,omitempty"`
+}
+
+// AgentState tracks the runtime state of a single agent for respawn scheduling.
+type AgentState struct {
+	// Session is the tmux session name for this agent.
+	Session string `json:"session"`
+
+	// LastPatrolCompleted is when the agent last completed a patrol cycle.
+	// Used to detect stuck agents.
+	LastPatrolCompleted *time.Time `json:"last_patrol_completed,omitempty"`
+
+	// RespawnScheduledAt is when a respawn is scheduled to occur.
+	// Nil if no respawn is scheduled.
+	RespawnScheduledAt *time.Time `json:"respawn_scheduled_at,omitempty"`
+
+	// LastExitedAt is when the agent's session was last detected as dead.
+	// Used to calculate respawn delay.
+	LastExitedAt *time.Time `json:"last_exited_at,omitempty"`
+
+	// ExitReason is why the agent exited (if known).
+	// Examples: "cycle", "crash", "stuck", "shutdown"
+	ExitReason string `json:"exit_reason,omitempty"`
+}
+
+// GetAgentState returns the state for an agent, creating it if needed.
+func (s *State) GetAgentState(agentID string) *AgentState {
+	if s.Agents == nil {
+		s.Agents = make(map[string]*AgentState)
+	}
+	if s.Agents[agentID] == nil {
+		s.Agents[agentID] = &AgentState{}
+	}
+	return s.Agents[agentID]
+}
+
+// ScheduleRespawn schedules a respawn for an agent based on its role config.
+func (s *State) ScheduleRespawn(agentID, session, role, exitReason string) {
+	agent := s.GetAgentState(agentID)
+	agent.Session = session
+	agent.ExitReason = exitReason
+
+	now := time.Now()
+	agent.LastExitedAt = &now
+
+	// Get respawn config for this role
+	cfg := GetRespawnConfig(role)
+
+	// Schedule respawn after the configured delay
+	respawnAt := now.Add(cfg.Delay)
+	agent.RespawnScheduledAt = &respawnAt
+}
+
+// ClearRespawn clears the scheduled respawn for an agent.
+// Called when the agent is successfully restarted.
+func (s *State) ClearRespawn(agentID, session string) {
+	agent := s.GetAgentState(agentID)
+	agent.Session = session
+	agent.RespawnScheduledAt = nil
+	agent.LastExitedAt = nil
+	agent.ExitReason = ""
+}
+
+// UpdatePatrolCompleted updates the last patrol completed time for an agent.
+func (s *State) UpdatePatrolCompleted(agentID string) {
+	agent := s.GetAgentState(agentID)
+	now := time.Now()
+	agent.LastPatrolCompleted = &now
 }
 
 // StateFile returns the path to the state file.
@@ -166,6 +237,57 @@ func IsPatrolEnabled(config *DaemonPatrolConfig, patrol string) bool {
 		}
 	}
 	return true // Default: enabled
+}
+
+// RespawnConfig holds configuration for controlled agent respawning.
+// Each role can have different delays and triggers for when to respawn.
+type RespawnConfig struct {
+	// Delay is the time to wait before respawning an agent after it exits.
+	Delay time.Duration `json:"delay"`
+
+	// StuckThreshold is the heartbeat age that indicates an agent is stuck.
+	// If an agent's heartbeat is older than this, it's considered stuck.
+	StuckThreshold time.Duration `json:"stuck_threshold"`
+
+	// Trigger controls when respawn should occur:
+	// - "always": respawn immediately after delay expires
+	// - "mq-not-empty": only respawn if merge queue has work waiting
+	// - "work-available": only respawn if there's work to be assigned
+	Trigger string `json:"trigger"`
+}
+
+// DefaultRespawnConfigs provides role-specific respawn settings.
+// These balance responsiveness with resource efficiency.
+var DefaultRespawnConfigs = map[string]RespawnConfig{
+	"deacon": {
+		Delay:          5 * time.Minute,
+		StuckThreshold: 15 * time.Minute,
+		Trigger:        "always",
+	},
+	"witness": {
+		Delay:          5 * time.Minute,
+		StuckThreshold: 10 * time.Minute,
+		Trigger:        "always",
+	},
+	"refinery": {
+		Delay:          0, // immediate
+		StuckThreshold: 5 * time.Minute,
+		Trigger:        "mq-not-empty", // only respawn if work waiting
+	},
+}
+
+// GetRespawnConfig returns the respawn configuration for a role.
+// Falls back to a sensible default if the role is not explicitly configured.
+func GetRespawnConfig(role string) RespawnConfig {
+	if cfg, ok := DefaultRespawnConfigs[role]; ok {
+		return cfg
+	}
+	// Default for unknown roles: conservative delay, always respawn
+	return RespawnConfig{
+		Delay:          5 * time.Minute,
+		StuckThreshold: 15 * time.Minute,
+		Trigger:        "always",
+	}
 }
 
 // LifecycleAction represents a lifecycle request action.

@@ -274,3 +274,177 @@ func TestLifecycleRequest_Serialization(t *testing.T) {
 		t.Errorf("Action mismatch: got %q, want %q", loaded.Action, request.Action)
 	}
 }
+
+func TestGetRespawnConfig_KnownRoles(t *testing.T) {
+	tests := []struct {
+		role           string
+		expectedDelay  time.Duration
+		expectedTrigger string
+	}{
+		{"deacon", 5 * time.Minute, "always"},
+		{"witness", 5 * time.Minute, "always"},
+		{"refinery", 0, "mq-not-empty"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			cfg := GetRespawnConfig(tt.role)
+			if cfg.Delay != tt.expectedDelay {
+				t.Errorf("Delay for %s: got %v, want %v", tt.role, cfg.Delay, tt.expectedDelay)
+			}
+			if cfg.Trigger != tt.expectedTrigger {
+				t.Errorf("Trigger for %s: got %q, want %q", tt.role, cfg.Trigger, tt.expectedTrigger)
+			}
+		})
+	}
+}
+
+func TestGetRespawnConfig_UnknownRole(t *testing.T) {
+	cfg := GetRespawnConfig("unknown-role")
+	// Should return conservative defaults
+	if cfg.Delay != 5*time.Minute {
+		t.Errorf("Default Delay: got %v, want 5m", cfg.Delay)
+	}
+	if cfg.Trigger != "always" {
+		t.Errorf("Default Trigger: got %q, want 'always'", cfg.Trigger)
+	}
+}
+
+func TestState_GetAgentState(t *testing.T) {
+	state := &State{}
+
+	// First call should create the agent
+	agent := state.GetAgentState("deacon")
+	if agent == nil {
+		t.Fatal("GetAgentState should not return nil")
+	}
+
+	// Second call should return the same agent
+	agent2 := state.GetAgentState("deacon")
+	if agent != agent2 {
+		t.Error("GetAgentState should return same instance")
+	}
+
+	// Different agent should return different instance
+	agent3 := state.GetAgentState("gastown/witness")
+	if agent == agent3 {
+		t.Error("Different agents should have different instances")
+	}
+}
+
+func TestState_ScheduleRespawn(t *testing.T) {
+	state := &State{}
+	before := time.Now()
+
+	state.ScheduleRespawn("deacon", "gt-deacon", "deacon", "crash")
+
+	agent := state.GetAgentState("deacon")
+	if agent.Session != "gt-deacon" {
+		t.Errorf("Session: got %q, want 'gt-deacon'", agent.Session)
+	}
+	if agent.ExitReason != "crash" {
+		t.Errorf("ExitReason: got %q, want 'crash'", agent.ExitReason)
+	}
+	if agent.LastExitedAt == nil {
+		t.Fatal("LastExitedAt should be set")
+	}
+	if agent.RespawnScheduledAt == nil {
+		t.Fatal("RespawnScheduledAt should be set")
+	}
+
+	// Verify respawn is scheduled after the delay
+	cfg := GetRespawnConfig("deacon")
+	expectedRespawnAt := agent.LastExitedAt.Add(cfg.Delay)
+	if !agent.RespawnScheduledAt.Equal(expectedRespawnAt) {
+		t.Errorf("RespawnScheduledAt: got %v, want %v", agent.RespawnScheduledAt, expectedRespawnAt)
+	}
+
+	// Verify timestamps are reasonable
+	if agent.LastExitedAt.Before(before) {
+		t.Error("LastExitedAt should be after test start")
+	}
+}
+
+func TestState_ClearRespawn(t *testing.T) {
+	state := &State{}
+
+	// Schedule a respawn first
+	state.ScheduleRespawn("deacon", "gt-deacon", "deacon", "crash")
+	agent := state.GetAgentState("deacon")
+	if agent.RespawnScheduledAt == nil {
+		t.Fatal("RespawnScheduledAt should be set before clear")
+	}
+
+	// Clear the respawn
+	state.ClearRespawn("deacon", "gt-deacon-new")
+
+	if agent.RespawnScheduledAt != nil {
+		t.Error("RespawnScheduledAt should be nil after clear")
+	}
+	if agent.LastExitedAt != nil {
+		t.Error("LastExitedAt should be nil after clear")
+	}
+	if agent.ExitReason != "" {
+		t.Error("ExitReason should be empty after clear")
+	}
+	if agent.Session != "gt-deacon-new" {
+		t.Errorf("Session should be updated: got %q, want 'gt-deacon-new'", agent.Session)
+	}
+}
+
+func TestState_UpdatePatrolCompleted(t *testing.T) {
+	state := &State{}
+	before := time.Now()
+
+	state.UpdatePatrolCompleted("gastown/witness")
+
+	agent := state.GetAgentState("gastown/witness")
+	if agent.LastPatrolCompleted == nil {
+		t.Fatal("LastPatrolCompleted should be set")
+	}
+	if agent.LastPatrolCompleted.Before(before) {
+		t.Error("LastPatrolCompleted should be after test start")
+	}
+}
+
+func TestAgentState_Serialization(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	respawnAt := now.Add(5 * time.Minute)
+
+	state := &State{
+		Running: true,
+		PID:     12345,
+		Agents: map[string]*AgentState{
+			"deacon": {
+				Session:            "gt-deacon",
+				RespawnScheduledAt: &respawnAt,
+				LastExitedAt:       &now,
+				ExitReason:         "cycle",
+			},
+		},
+	}
+
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("Marshal error: %v", err)
+	}
+
+	var loaded State
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+
+	if loaded.Agents == nil {
+		t.Fatal("Agents should not be nil")
+	}
+	agent, ok := loaded.Agents["deacon"]
+	if !ok {
+		t.Fatal("deacon agent should exist")
+	}
+	if agent.Session != "gt-deacon" {
+		t.Errorf("Session: got %q, want 'gt-deacon'", agent.Session)
+	}
+	if agent.ExitReason != "cycle" {
+		t.Errorf("ExitReason: got %q, want 'cycle'", agent.ExitReason)
+	}
+}

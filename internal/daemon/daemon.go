@@ -282,6 +282,10 @@ func (d *Daemon) heartbeat(state *State) {
 	// This is a safety net - Deacon patrol also does this more frequently.
 	d.cleanupOrphanedProcesses()
 
+	// 13. Process pending respawns with role-specific delays
+	// This handles agents that have exited and need controlled respawning.
+	d.processPendingRespawns(state)
+
 	// Update state
 	state.LastHeartbeat = time.Now()
 	state.HeartbeatCount++
@@ -1128,4 +1132,172 @@ func (d *Daemon) cleanupOrphanedProcesses() {
 			}
 		}
 	}
+}
+
+// processPendingRespawns checks for scheduled respawns and executes them if due.
+// Uses role-specific RespawnConfig for delays and triggers.
+func (d *Daemon) processPendingRespawns(state *State) {
+	if state.Agents == nil {
+		return
+	}
+
+	now := time.Now()
+	for agentID, agentState := range state.Agents {
+		if agentState.RespawnScheduledAt == nil {
+			continue // No respawn scheduled
+		}
+
+		// Check if respawn is due
+		if now.Before(*agentState.RespawnScheduledAt) {
+			continue // Not yet time
+		}
+
+		// Determine role from agent ID for trigger check
+		role := d.extractRoleFromAgentID(agentID)
+		cfg := GetRespawnConfig(role)
+
+		// Check trigger conditions
+		if !d.shouldRespawn(agentID, role, cfg.Trigger) {
+			d.logger.Printf("Respawn for %s skipped: trigger %q not satisfied", agentID, cfg.Trigger)
+			continue
+		}
+
+		// Execute respawn
+		d.logger.Printf("Executing scheduled respawn for %s (role=%s, delay=%v)",
+			agentID, role, cfg.Delay)
+
+		if err := d.executeRespawn(agentID, role, agentState.Session); err != nil {
+			d.logger.Printf("Error respawning %s: %v", agentID, err)
+			// Reschedule with backoff
+			backoffDelay := cfg.Delay * 2
+			if backoffDelay > 30*time.Minute {
+				backoffDelay = 30 * time.Minute
+			}
+			newRespawnAt := now.Add(backoffDelay)
+			agentState.RespawnScheduledAt = &newRespawnAt
+			d.logger.Printf("Rescheduled respawn for %s at %s", agentID, newRespawnAt.Format(time.RFC3339))
+		} else {
+			// Clear respawn on success
+			state.ClearRespawn(agentID, agentState.Session)
+			d.logger.Printf("Successfully respawned %s", agentID)
+		}
+	}
+}
+
+// shouldRespawn checks if the respawn trigger condition is satisfied.
+func (d *Daemon) shouldRespawn(agentID, role, trigger string) bool {
+	switch trigger {
+	case "always":
+		return true
+
+	case "mq-not-empty":
+		// Only respawn refinery if merge queue has work
+		rigName := d.extractRigFromAgentID(agentID)
+		if rigName == "" {
+			return true // Can't determine rig, default to respawn
+		}
+		return d.hasMergeQueueWork(rigName)
+
+	case "work-available":
+		// Only respawn if there's work to be assigned
+		// For now, this is equivalent to "always" for most roles
+		// Future: check beads for unassigned work
+		return true
+
+	default:
+		// Unknown trigger, default to respawn
+		return true
+	}
+}
+
+// hasMergeQueueWork checks if a rig's merge queue has pending work.
+func (d *Daemon) hasMergeQueueWork(rigName string) bool {
+	// Use bd to query merge-request beads
+	cmd := exec.Command("bd", "list", "--type=merge-request", "--status=open", "--count")
+	cmd.Dir = filepath.Join(d.config.TownRoot, rigName)
+	cmd.Env = os.Environ()
+
+	output, err := cmd.Output()
+	if err != nil {
+		d.logger.Printf("Warning: failed to check merge queue for %s: %v", rigName, err)
+		return true // Default to respawn on error
+	}
+
+	count := strings.TrimSpace(string(output))
+	return count != "0" && count != ""
+}
+
+// executeRespawn performs the actual respawn of an agent.
+func (d *Daemon) executeRespawn(agentID, role, sessionName string) error {
+	switch role {
+	case "deacon":
+		d.ensureDeaconRunning()
+		return nil
+
+	case "witness":
+		rigName := d.extractRigFromAgentID(agentID)
+		if rigName == "" {
+			return fmt.Errorf("cannot extract rig name from %s", agentID)
+		}
+		d.ensureWitnessRunning(rigName)
+		return nil
+
+	case "refinery":
+		rigName := d.extractRigFromAgentID(agentID)
+		if rigName == "" {
+			return fmt.Errorf("cannot extract rig name from %s", agentID)
+		}
+		d.ensureRefineryRunning(rigName)
+		return nil
+
+	default:
+		return fmt.Errorf("unknown role for respawn: %s", role)
+	}
+}
+
+// extractRoleFromAgentID extracts the role type from an agent ID.
+// Examples:
+//   - "deacon" → "deacon"
+//   - "gastown/witness" → "witness"
+//   - "beads/refinery" → "refinery"
+func (d *Daemon) extractRoleFromAgentID(agentID string) string {
+	if agentID == "deacon" {
+		return "deacon"
+	}
+	if strings.HasSuffix(agentID, "/witness") {
+		return "witness"
+	}
+	if strings.HasSuffix(agentID, "/refinery") {
+		return "refinery"
+	}
+	if strings.Contains(agentID, "/polecats/") {
+		return "polecat"
+	}
+	return "unknown"
+}
+
+// scheduleAgentRespawn schedules a respawn for an agent that has exited.
+// This is called when an agent session is detected as dead.
+func (d *Daemon) scheduleAgentRespawn(state *State, agentID, sessionName, role, exitReason string) {
+	cfg := GetRespawnConfig(role)
+
+	// Schedule respawn
+	state.ScheduleRespawn(agentID, sessionName, role, exitReason)
+
+	d.logger.Printf("Scheduled respawn for %s (role=%s, delay=%v, trigger=%s, reason=%s)",
+		agentID, role, cfg.Delay, cfg.Trigger, exitReason)
+}
+
+// isAgentStuck checks if an agent's heartbeat indicates it's stuck.
+// Uses role-specific StuckThreshold from RespawnConfig.
+func (d *Daemon) isAgentStuck(agentID string, lastPatrolCompleted *time.Time) bool {
+	if lastPatrolCompleted == nil {
+		return false // No heartbeat recorded yet
+	}
+
+	role := d.extractRoleFromAgentID(agentID)
+	cfg := GetRespawnConfig(role)
+
+	age := time.Since(*lastPatrolCompleted)
+	return age > cfg.StuckThreshold
 }
