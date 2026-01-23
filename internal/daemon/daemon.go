@@ -209,6 +209,14 @@ const recoveryHeartbeatInterval = 3 * time.Minute
 // - Agents with work-on-hook not progressing (GUPP violation)
 // - Orphaned work (assigned to dead agents)
 func (d *Daemon) heartbeat(state *State) {
+	// Skip heartbeat if shutdown is in progress.
+	// This prevents the daemon from fighting shutdown by auto-restarting killed agents.
+	// The shutdown.lock file is created by gt down before terminating sessions.
+	if d.isShutdownInProgress() {
+		d.logger.Println("Shutdown in progress, skipping heartbeat")
+		return
+	}
+
 	d.logger.Println("Heartbeat starting (recovery-focused)")
 
 	// 1. Ensure Deacon is running (restart if dead)
@@ -436,7 +444,9 @@ func (d *Daemon) checkDeaconHeartbeat() {
 		if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
 			d.logger.Printf("Error killing stuck Deacon: %v", err)
 		}
-		// ensureDeaconRunning will restart on next heartbeat
+		// Spawn new Deacon immediately instead of waiting for next heartbeat
+		// (kill may fail if session disappeared between check and kill)
+		d.ensureDeaconRunning()
 	} else {
 		// Stuck but not critically - nudge to wake up
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
@@ -668,6 +678,15 @@ func (d *Daemon) shutdown(state *State) error { //nolint:unparam // error return
 // Stop signals the daemon to stop.
 func (d *Daemon) Stop() {
 	d.cancel()
+}
+
+// isShutdownInProgress checks if a shutdown is currently in progress.
+// The shutdown.lock file is created by gt down before terminating sessions.
+// This prevents the daemon from fighting shutdown by auto-restarting killed agents.
+func (d *Daemon) isShutdownInProgress() bool {
+	lockPath := filepath.Join(d.config.TownRoot, "daemon", "shutdown.lock")
+	_, err := os.Stat(lockPath)
+	return err == nil
 }
 
 // IsRunning checks if a daemon is running for the given town.
@@ -1082,6 +1101,7 @@ Manual intervention may be required.`,
 
 	cmd := exec.Command("gt", "mail", "send", witnessAddr, "-s", subject, "-m", body) //nolint:gosec // G204: args are constructed internally
 	cmd.Dir = d.config.TownRoot
+	cmd.Env = os.Environ() // Inherit PATH to find gt executable
 	if err := cmd.Run(); err != nil {
 		d.logger.Printf("Warning: failed to notify witness of crashed polecat: %v", err)
 	}

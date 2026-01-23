@@ -268,19 +268,29 @@ func runDone(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot complete: uncommitted changes would be lost\nCommit your changes first, or use --status DEFERRED to exit without completing\nUncommitted: %s", workStatus.String())
 		}
 
-		// Check that branch has commits ahead of origin/default (not local default)
-		// This ensures we compare against the remote, not a potentially stale local copy
+		// Check if branch has commits ahead of origin/default
+		// If not, work may have been pushed directly to main - that's fine, just skip MR
 		originDefault := "origin/" + defaultBranch
 		aheadCount, err := g.CommitsAhead(originDefault, "HEAD")
 		if err != nil {
 			// Fallback to local branch comparison if origin not available
 			aheadCount, err = g.CommitsAhead(defaultBranch, branch)
 			if err != nil {
-				return fmt.Errorf("checking commits ahead of %s: %w", defaultBranch, err)
+				// Can't determine - assume work exists and continue
+				style.PrintWarning("could not check commits ahead of %s: %v", defaultBranch, err)
+				aheadCount = 1
 			}
 		}
+
+		// If no commits ahead, work was likely pushed directly to main (or already merged)
+		// This is valid - skip MR creation but still complete successfully
 		if aheadCount == 0 {
-			return fmt.Errorf("branch '%s' has 0 commits ahead of %s; nothing to merge\nMake and commit changes first, or use --status DEFERRED to exit without completing", branch, originDefault)
+			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), originDefault)
+			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
+			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
+
+			// Skip straight to witness notification (no MR needed)
+			goto notifyWitness
 		}
 
 		// CRITICAL: Push branch BEFORE creating MR bead (hq-6dk53, hq-a4ksk)
@@ -410,6 +420,7 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Branch: %s\n", branch)
 	}
 
+notifyWitness:
 	// Notify Witness about completion
 	// Use town-level beads for cross-agent mail
 	townRouter := mail.NewRouter(townRoot)
@@ -592,6 +603,19 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, _ string) { // issueID unus
 		hookedBeadID := agentBead.HookBead
 		// Only close if the hooked bead exists and is still in "hooked" status
 		if hookedBead, err := bd.Show(hookedBeadID); err == nil && hookedBead.Status == beads.StatusHooked {
+			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
+			// When using formula-on-bead (gt sling formula --on bead), the base bead
+			// has attached_molecule pointing to the wisp. Without this fix, gt done
+			// only closed the hooked bead, leaving the wisp orphaned.
+			// Order matters: wisp closes -> unblocks base bead -> base bead closes.
+			attachment := beads.ParseAttachmentFields(hookedBead)
+			if attachment != nil && attachment.AttachedMolecule != "" {
+				if err := bd.Close(attachment.AttachedMolecule); err != nil {
+					// Non-fatal: warn but continue
+					fmt.Fprintf(os.Stderr, "Warning: couldn't close attached molecule %s: %v\n", attachment.AttachedMolecule, err)
+				}
+			}
+
 			if err := bd.Close(hookedBeadID); err != nil {
 				// Non-fatal: warn but continue
 				fmt.Fprintf(os.Stderr, "Warning: couldn't close hooked bead %s: %v\n", hookedBeadID, err)

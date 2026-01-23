@@ -125,16 +125,16 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		refineryRigDir = filepath.Join(m.rig.Path, "mayor", "rig")
 	}
 
-	// Ensure runtime settings exist in refineryRigDir (e.g., refinery/rig/.claude/).
-	// Claude Code 2.1.11+ stops walking at git boundaries, so hooks must be in the
-	// same directory as the .git file. The .claude/ directory is gitignored.
-	runtimeConfig := config.LoadRuntimeConfig(m.rig.Path)
-	if err := runtime.EnsureSettingsForRole(refineryRigDir, "refinery", runtimeConfig); err != nil {
+	// Ensure runtime settings exist in refinery/ (not refinery/rig/) so we don't
+	// write into the source repo. Runtime walks up the tree to find settings.
+	refineryParentDir := filepath.Join(m.rig.Path, "refinery")
+	townRoot := filepath.Dir(m.rig.Path)
+	runtimeConfig := config.ResolveRoleAgentConfig("refinery", townRoot, m.rig.Path)
+	if err := runtime.EnsureSettingsForRole(refineryParentDir, "refinery", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
 
 	// Build startup command first
-	townRoot := filepath.Dir(m.rig.Path)
 	var command string
 	if agentOverride != "" {
 		var err error
@@ -173,6 +173,10 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 	theme := tmux.AssignTheme(m.rig.Name)
 	_ = t.ConfigureGasTownSession(sessionID, theme, m.rig.Name, "refinery", "refinery")
 
+	// Accept bypass permissions warning dialog if it appears.
+	// Must be before WaitForRuntimeReady to avoid race where dialog blocks prompt detection.
+	_ = t.AcceptBypassPermissionsWarning(sessionID)
+
 	// Wait for Claude to start and show its prompt - fatal if Claude fails to launch
 	// WaitForRuntimeReady waits for the runtime to be ready
 	if err := t.WaitForRuntimeReady(sessionID, runtimeConfig, constants.ClaudeStartTimeout); err != nil {
@@ -180,9 +184,6 @@ func (m *Manager) Start(foreground bool, agentOverride string) error {
 		_ = t.KillSessionWithProcesses(sessionID)
 		return fmt.Errorf("waiting for refinery to start: %w", err)
 	}
-
-	// Accept bypass permissions warning dialog if it appears.
-	_ = t.AcceptBypassPermissionsWarning(sessionID)
 
 	// Wait for runtime to be fully ready
 	runtime.SleepForReadyDelay(runtimeConfig)

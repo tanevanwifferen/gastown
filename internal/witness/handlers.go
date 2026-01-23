@@ -247,6 +247,17 @@ func HandleMerged(workDir, rigName string, msg *mail.Message) *HandlerResult {
 		return result
 	}
 
+	// Redundant convoy observer: check if completed issue is tracked by a convoy.
+	// Run this after verifyCommitOnMain succeeds, regardless of cleanup status.
+	// The work is confirmed merged at this point, so convoys tracking this issue
+	// can potentially close even if polecat cleanup is blocked.
+	if onMain && payload.IssueID != "" {
+		townRoot, _ := workspace.Find(workDir)
+		if townRoot != "" {
+			convoy.CheckConvoysForIssue(townRoot, payload.IssueID, "witness", nil)
+		}
+	}
+
 	// ZFC #10: Check cleanup_status before allowing nuke
 	// This prevents work loss when MERGED signal arrives for stale MRs or
 	// when polecat has new unpushed work since the MR was created.
@@ -265,14 +276,6 @@ func HandleMerged(workDir, rigName string, msg *mail.Message) *HandlerResult {
 			result.Handled = true
 			result.WispCreated = wispID
 			result.Action = fmt.Sprintf("auto-nuked %s (cleanup_status=clean, wisp=%s)", payload.PolecatName, wispID)
-
-			// Redundant convoy observer: check if completed issue is tracked by a convoy
-			if payload.IssueID != "" {
-				townRoot, _ := workspace.Find(workDir)
-				if townRoot != "" {
-					convoy.CheckConvoysForIssue(townRoot, payload.IssueID, "witness", nil)
-				}
-			}
 		}
 
 	case "has_uncommitted":
@@ -308,14 +311,6 @@ func HandleMerged(workDir, rigName string, msg *mail.Message) *HandlerResult {
 			result.Handled = true
 			result.WispCreated = wispID
 			result.Action = fmt.Sprintf("auto-nuked %s (commit on main, cleanup_status=%s, wisp=%s)", payload.PolecatName, cleanupStatus, wispID)
-
-			// Redundant convoy observer: check if completed issue is tracked by a convoy
-			if payload.IssueID != "" {
-				townRoot, _ := workspace.Find(workDir)
-				if townRoot != "" {
-					convoy.CheckConvoysForIssue(townRoot, payload.IssueID, "witness", nil)
-				}
-			}
 		}
 	}
 

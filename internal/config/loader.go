@@ -1085,6 +1085,13 @@ func fillRuntimeDefaults(rc *RuntimeConfig) *RuntimeConfig {
 		Args:          rc.Args,
 		InitialPrompt: rc.InitialPrompt,
 	}
+	// Copy Env map to avoid mutation and preserve agent-specific env vars
+	if len(rc.Env) > 0 {
+		result.Env = make(map[string]string, len(rc.Env))
+		for k, v := range rc.Env {
+			result.Env[k] = v
+		}
+	}
 	if result.Command == "" {
 		result.Command = "claude"
 	}
@@ -1252,11 +1259,15 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 	if rc.Session != nil && rc.Session.SessionIDEnv != "" {
 		resolvedEnv["GT_SESSION_ID_ENV"] = rc.Session.SessionIDEnv
 	}
+	// Merge agent-specific env vars (e.g., OPENCODE_PERMISSION for yolo mode)
+	for k, v := range rc.Env {
+		resolvedEnv[k] = v
+	}
 
 	// Build environment export prefix
 	var exports []string
 	for k, v := range resolvedEnv {
-		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
+		exports = append(exports, fmt.Sprintf("%s=%s", k, ShellQuote(v)))
 	}
 
 	// Sort for deterministic output
@@ -1264,7 +1275,11 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 
 	var cmd string
 	if len(exports) > 0 {
-		cmd = "export " + strings.Join(exports, " ") + " && "
+		// Use 'exec env' instead of 'export ... &&' so the agent process
+		// replaces the shell. This allows WaitForCommand to detect the
+		// running agent via pane_current_command (which shows the direct
+		// process, not child processes).
+		cmd = "exec env " + strings.Join(exports, " ") + " "
 	}
 
 	// Add runtime command
@@ -1278,6 +1293,7 @@ func BuildStartupCommand(envVars map[string]string, rigPath, prompt string) stri
 }
 
 // PrependEnv prepends export statements to a command string.
+// Values containing special characters are properly shell-quoted.
 func PrependEnv(command string, envVars map[string]string) string {
 	if len(envVars) == 0 {
 		return command
@@ -1285,7 +1301,7 @@ func PrependEnv(command string, envVars map[string]string) string {
 
 	var exports []string
 	for k, v := range envVars {
-		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
+		exports = append(exports, fmt.Sprintf("%s=%s", k, ShellQuote(v)))
 	}
 
 	sort.Strings(exports)
@@ -1357,17 +1373,25 @@ func BuildStartupCommandWithAgentOverride(envVars map[string]string, rigPath, pr
 	if agentOverride != "" {
 		resolvedEnv["GT_AGENT"] = agentOverride
 	}
+	// Merge agent-specific env vars (e.g., OPENCODE_PERMISSION for yolo mode)
+	for k, v := range rc.Env {
+		resolvedEnv[k] = v
+	}
 
 	// Build environment export prefix
 	var exports []string
 	for k, v := range resolvedEnv {
-		exports = append(exports, fmt.Sprintf("%s=%s", k, v))
+		exports = append(exports, fmt.Sprintf("%s=%s", k, ShellQuote(v)))
 	}
 	sort.Strings(exports)
 
 	var cmd string
 	if len(exports) > 0 {
-		cmd = "export " + strings.Join(exports, " ") + " && "
+		// Use 'exec env' instead of 'export ... &&' so the agent process
+		// replaces the shell. This allows WaitForCommand to detect the
+		// running agent via pane_current_command (which shows the direct
+		// process, not child processes).
+		cmd = "exec env " + strings.Join(exports, " ") + " "
 	}
 
 	if prompt != "" {
