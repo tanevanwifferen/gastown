@@ -515,10 +515,18 @@ func (d *Daemon) ensureRefineriesRunning() {
 
 // ensureRefineryRunning ensures the refinery for a specific rig is running.
 // Discover, don't track: uses Manager.Start() which checks tmux directly (gt-zecmc).
+// ON-DEMAND: Only spawns if merge queue has work. If MQ is empty, refinery stays dead.
 func (d *Daemon) ensureRefineryRunning(rigName string) {
 	// Check rig operational state before auto-starting
 	if operational, reason := d.isRigOperational(rigName); !operational {
 		d.logger.Printf("Skipping refinery auto-start for %s: %s", rigName, reason)
+		return
+	}
+
+	// ON-DEMAND: Only spawn refinery if merge queue has work
+	// This is the key optimization: refinery stays dead when MQ is empty
+	if !d.hasMergeQueueWork(rigName) {
+		d.logger.Printf("Skipping refinery for %s: merge queue is empty", rigName)
 		return
 	}
 
