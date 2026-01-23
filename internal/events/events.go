@@ -54,6 +54,9 @@ const (
 	TypeSessionDeath = "session_death" // Feed-visible session termination
 	TypeMassDeath    = "mass_death"    // Multiple sessions died in short window
 
+	// Agent health events (from daemon health checks)
+	TypeAgentStuck = "agent_stuck" // Agent alive but not making progress
+
 	// Witness patrol events
 	TypePatrolStarted   = "patrol_started"
 	TypePolecatChecked  = "polecat_checked"
@@ -327,6 +330,23 @@ func SessionPayload(sessionID, role, topic, cwd string) map[string]interface{} {
 	}
 	if cwd != "" {
 		p["cwd"] = cwd
+	}
+	return p
+}
+
+// AgentStuckPayload creates a payload for agent stuck events.
+// role: Agent role (e.g., "deacon", "witness", "refinery")
+// rig: Rig name (empty for town-level agents)
+// session: tmux session name
+// heartbeatAge: How long since last heartbeat
+func AgentStuckPayload(role, rig, session, heartbeatAge string) map[string]interface{} {
+	p := map[string]interface{}{
+		"role":          role,
+		"session":       session,
+		"heartbeat_age": heartbeatAge,
+	}
+	if rig != "" {
+		p["rig"] = rig
 	}
 	return p
 }

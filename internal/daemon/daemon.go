@@ -241,6 +241,10 @@ func (d *Daemon) heartbeat(state *State) {
 		d.checkDeaconHeartbeat()
 	}
 
+	// 3.5 Check patrol agent health via heartbeat staleness detection
+	// This detects agents that are alive but stuck (not making progress)
+	d.checkPatrolAgentHealth()
+
 	// 4. Ensure Witnesses are running for all rigs (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
 	if IsPatrolEnabled(d.patrolConfig, "witness") {
