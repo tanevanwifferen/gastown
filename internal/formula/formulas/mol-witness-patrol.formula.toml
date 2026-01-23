@@ -1,6 +1,6 @@
 description = "Per-rig worker monitor patrol loop.\n\nThe Witness is the Pit Boss for your rig. You watch polecats, nudge them toward\ncompletion, verify clean git state before kills, and escalate stuck workers.\n\n**You do NOT do implementation work.** Your job is oversight, not coding.\n\n## Ephemeral Polecat Model\n\nPolecats are truly ephemeral - done at MR submission, recyclable immediately:\n\n```\nPolecat lifecycle: spawning → working → mr_submitted → nuked\nMR lifecycle:      created → queued → processed → merged (Refinery handles)\n```\n\nOnce a polecat's branch is pushed (cleanup_status=clean), the polecat can be\nnuked immediately. The MR continues independently in the Refinery. If conflicts\narise, Refinery creates a NEW conflict-resolution task for a NEW polecat.\n\n**Key principle**: Polecat lifecycle is separate from MR lifecycle.\n\n## Design Philosophy\n\nThis patrol follows Gas Town principles:\n- **Discovery over tracking**: Observe reality each cycle, don't maintain state\n- **Events over state**: POLECAT_DONE mail triggers immediate cleanup\n- **Ephemeral by default**: Clean polecats are nuked immediately, no waiting\n- **Cleanup wisps for exceptions**: Only created when intervention needed\n- **Task tool for parallelism**: Subagents inspect polecats, not molecule arms\n\n## Patrol Shape (Linear, Deacon-style)\n\n```\ninbox-check ─► process-cleanups ─► check-refinery ─► survey-workers\n                                                            │\n         ┌──────────────────────────────────────────────────┘\n         ▼\n  check-timer-gates ─► check-swarm ─► ping-deacon ─► patrol-cleanup ─► context-check ─► loop-or-exit\n```\n\nNo dynamic arms. No fanout gates. No persistent nudge counters.\nState is discovered each cycle from reality (tmux, beads, mail)."
 formula = 'mol-witness-patrol'
-version = 2
+version = 3
 
 [[steps]]
 description = "Check inbox and handle messages.\n\n```bash\ngt mail inbox\n```\n\nFor each message:\n\n**POLECAT_STARTED**:\nA new polecat has started working. Acknowledge and archive.\n```bash\n# Acknowledge startup (optional: log for activity tracking)\ngt mail archive <message-id>\n```\nNo action needed beyond acknowledgment - archive immediately.\n\n**POLECAT_DONE / LIFECYCLE:Shutdown**:\n\n*EPHEMERAL MODEL*: Polecats are truly ephemeral - done at MR submission,\nrecyclable immediately. Once the branch is pushed (cleanup_status=clean),\nthe polecat can be nuked. The MR lifecycle continues independently in the\nRefinery. If conflicts arise, Refinery creates a NEW conflict-resolution\ntask for a NEW polecat.\n\nPolecat lifecycle: spawning → working → mr_submitted → nuked\nMR lifecycle: created → queued → processed → merged (handled by Refinery)\n\nThe handler (HandlePolecatDone) will:\n1. Check cleanup_status from agent bead\n2. If \"clean\" (branch pushed): AUTO-NUKE immediately, archive mail\n3. If dirty: Create cleanup wisp for manual intervention\n\n```bash\n# The handler does this automatically:\n# - For clean state: gt polecat nuke <name> → archive mail\n# - For dirty state: create wisp → process in next step\n```\n\nCleanup wisps are only created when something is wrong (uncommitted changes,\nunpushed commits). Most POLECAT_DONE messages result in immediate nuke.\n\n**MERGED**:\nA branch was merged successfully. This is informational in the ephemeral model\nsince the polecat was already nuked after MR submission.\n\nIf a cleanup wisp exists (dirty state), complete the cleanup:\n```bash\n# Find the cleanup wisp for this polecat\nbd list --wisp --labels=polecat:<name>,state:merge-requested --status=open\n\n# If found, proceed with full polecat nuke:\ngt polecat nuke <name>\n\n# Burn the cleanup wisp\nbd close <wisp-id>\n```\nArchive after cleanup is complete.\n\n**HELP / Blocked**:\nAssess the request. Can you help? If not, escalate to Mayor:\n```bash\ngt mail send mayor/ -s \"Escalation: <polecat> needs help\" -m \"<details>\"\n```\nArchive after handling (escalated or resolved):\n```bash\ngt mail archive <message-id>\n```\n\n**HANDOFF**:\nRead predecessor context. Continue from where they left off.\nArchive after absorbing context:\n```bash\ngt mail archive <message-id>\n```\n\n**SWARM_START**:\nMayor initiating batch polecat work. Initialize swarm tracking.\n```bash\n# Parse swarm info from mail body: {\"swarm_id\": \"batch-123\", \"beads\": [\"bd-a\", \"bd-b\"]}\nbd create --wisp --title \"swarm:<swarm_id>\" --description \"Tracking batch: <swarm_id>\" --labels swarm,swarm_id:<swarm_id>,total:<N>,completed:0,start:<timestamp>\n```\nArchive after creating swarm tracking wisp:\n```bash\ngt mail archive <message-id>\n```\n\n**Hygiene principle**: Archive messages after they're fully processed.\nKeep only: active work, unprocessed requests. Inbox should be near-empty."
@@ -56,7 +56,24 @@ needs = ['patrol-cleanup']
 title = 'Check own context limit'
 
 [[steps]]
-description = "End of patrol cycle decision.\n\n**If context LOW** (can continue patrolling):\n1. Generate a brief summary of this patrol cycle\n2. Squash the current wisp:\n```bash\nbd mol squash <mol-id> --summary \"<patrol-summary>\"\n```\n3. Create a new patrol wisp:\n```bash\nbd mol wisp mol-witness-patrol\n```\n4. Continue executing from the inbox-check step of the new wisp\n\n**If context HIGH** (approaching limit):\n1. Write handoff mail with notable observations:\n```bash\ngt handoff -s \"Witness patrol handoff\" -m \"<observations>\"\n```\n2. Exit cleanly - the daemon will respawn a fresh Witness session\n\n**IMPORTANT**: You must either create a new wisp (context LOW) or exit (context HIGH).\nNever leave the session idle without work on your hook."
-id = 'loop-or-exit'
+description = """
+Patrol cycle complete. Terminate for fresh context.
+
+**Always run gt patrol-done:**
+```bash
+gt patrol-done --summary "<brief patrol summary>"
+```
+
+This command:
+1. Records patrol completion heartbeat (daemon tracks this)
+2. Terminates session cleanly
+3. Daemon will respawn after configured delay
+
+Do NOT loop internally. Do NOT use gt handoff.
+Fresh context on every patrol cycle ensures:
+- No context accumulation
+- Automatic formula updates on respawn
+- Clean slate for next patrol"""
+id = 'patrol-complete'
 needs = ['context-check']
-title = 'Loop or exit for respawn'
+title = 'Terminate for fresh context'

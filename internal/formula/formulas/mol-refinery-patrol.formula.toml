@@ -33,7 +33,7 @@ Witness                    Refinery                      Git
 After successful merge, Refinery sends MERGED mail back to Witness so it can
 complete cleanup (nuke the polecat worktree)."""
 formula = "mol-refinery-patrol"
-version = 4
+version = 5
 
 [[steps]]
 id = "inbox-check"
@@ -427,43 +427,24 @@ For each open MR bead:
 Keep only: pending MRs in queue."""
 
 [[steps]]
-id = "burn-or-loop"
-title = "Burn and respawn or loop"
+id = "patrol-complete"
+title = "Terminate for fresh context"
 needs = ["patrol-cleanup"]
 description = """
-End of patrol cycle decision.
+Patrol cycle complete. Terminate for fresh context.
 
-**Step 1: Estimate remaining context**
-
-Ask yourself:
-- Have I processed many branches this cycle?
-- Is the conversation getting long?
-- Am I starting to lose track of earlier context?
-
-Rule of thumb: If you've done 3+ merges or processed significant cleanup work,
-it's time for a fresh session.
-
-**Step 2: Decision tree**
-
-If queue non-empty AND context LOW:
-- Squash this wisp to digest
-- Spawn fresh patrol wisp
-- Return to inbox-check
-
-If queue empty OR context HIGH OR good stopping point:
-- Squash wisp with summary digest
-- Use `gt handoff` for clean session transition:
-
+**Always run gt patrol-done:**
 ```bash
-gt handoff -s "Patrol complete" -m "Merged X branches, Y tests passed.
-Queue: empty/N remaining
-Next: [any notes for successor]"
+gt patrol-done --summary "<brief patrol summary>"
 ```
 
-**Why gt handoff?**
-- Sends handoff mail to yourself with context
-- Respawns with fresh Claude instance
-- SessionStart hook runs gt prime
-- Successor picks up from your hook
+This command:
+1. Records patrol completion heartbeat (daemon tracks this)
+2. Terminates session cleanly
+3. Daemon will respawn after configured delay
 
-**DO NOT just exit.** Always use `gt handoff` for proper lifecycle."""
+Do NOT loop internally. Do NOT use gt handoff.
+Fresh context on every patrol cycle ensures:
+- No context accumulation
+- Automatic formula updates on respawn
+- Clean slate for next patrol"""
