@@ -217,6 +217,21 @@ Examples:
 
 var refineryBlockedJSON bool
 
+var refineryNotifyEmptyCmd = &cobra.Command{
+	Use:   "notify-empty [rig]",
+	Short: "Notify mayor that merge queue is empty",
+	Long: `Notify the mayor that the merge queue for a rig is empty.
+
+Called by the refinery agent when it has processed all pending MRs.
+Sends an informational mail to the mayor.
+
+Examples:
+  gt refinery notify-empty
+  gt refinery notify-empty gastown`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runRefineryNotifyEmpty,
+}
+
 func init() {
 	// Start flags
 	refineryStartCmd.Flags().BoolVar(&refineryForeground, "foreground", false, "Run in foreground (default: background)")
@@ -255,6 +270,7 @@ func init() {
 	refineryCmd.AddCommand(refineryUnclaimedCmd)
 	refineryCmd.AddCommand(refineryReadyCmd)
 	refineryCmd.AddCommand(refineryBlockedCmd)
+	refineryCmd.AddCommand(refineryNotifyEmptyCmd)
 
 	rootCmd.AddCommand(refineryCmd)
 }
@@ -756,5 +772,23 @@ func runRefineryBlocked(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	return nil
+}
+
+func runRefineryNotifyEmpty(cmd *cobra.Command, args []string) error {
+	rigName := ""
+	if len(args) > 0 {
+		rigName = args[0]
+	}
+
+	_, r, rigName, err := getRefineryManager(rigName)
+	if err != nil {
+		return err
+	}
+
+	eng := refinery.NewEngineer(r)
+	eng.NotifyMayorQueueEmpty()
+
+	fmt.Printf("%s Notified mayor that merge queue is empty for %s\n", style.Bold.Render("✓"), rigName)
 	return nil
 }

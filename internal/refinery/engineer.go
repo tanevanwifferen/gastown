@@ -492,6 +492,9 @@ func (e *Engineer) handleSuccess(mr *beads.Issue, result ProcessResult) {
 
 	// 5. Log success
 	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
+
+	// 6. Notify mayor of successful merge
+	e.notifyMayorMerged(mr.ID, mrFields.Branch, mrFields.SourceIssue, result.MergeCommit)
 }
 
 // handleFailure handles a failed merge request.
@@ -598,6 +601,9 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
 
 	// 3. Log success
 	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
+
+	// 4. Notify mayor of successful merge
+	e.notifyMayorMerged(mr.ID, mr.Branch, mr.SourceIssue, result.MergeCommit)
 }
 
 // HandleMRInfoFailure handles a failed merge from MRInfo.
@@ -947,4 +953,44 @@ func (e *Engineer) ReleaseMR(mrID string) error {
 	return e.beads.Update(mrID, beads.UpdateOptions{
 		Assignee: &empty,
 	})
+}
+
+// notifyMayorMerged sends a notification to the mayor when an MR is successfully merged.
+func (e *Engineer) notifyMayorMerged(mrID, branch, sourceIssue, mergeCommit string) {
+	subject := fmt.Sprintf("✓ Merged: %s", branch)
+	body := fmt.Sprintf("MR %s merged successfully.\n\nBranch: %s\nSource issue: %s\nMerge commit: %s\nRig: %s",
+		mrID, branch, sourceIssue, mergeCommit[:8], e.rig.Name)
+
+	msg := &mail.Message{
+		From:     e.rig.Name + "/refinery",
+		To:       "mayor/",
+		Subject:  subject,
+		Body:     body,
+		Priority: mail.PriorityLow, // Informational, not urgent
+		Wisp:     true,             // Ephemeral notification
+	}
+
+	if err := e.router.Send(msg); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to notify mayor of merge: %v\n", err)
+	}
+}
+
+// NotifyMayorQueueEmpty sends a notification to the mayor when the merge queue becomes empty.
+// This should be called by the refinery agent when ListReadyMRs returns no results.
+func (e *Engineer) NotifyMayorQueueEmpty() {
+	subject := fmt.Sprintf("📭 Merge queue empty: %s", e.rig.Name)
+	body := fmt.Sprintf("The merge queue for rig %s is now empty.\n\nAll pending MRs have been processed.", e.rig.Name)
+
+	msg := &mail.Message{
+		From:     e.rig.Name + "/refinery",
+		To:       "mayor/",
+		Subject:  subject,
+		Body:     body,
+		Priority: mail.PriorityLow, // Informational
+		Wisp:     true,             // Ephemeral notification
+	}
+
+	if err := e.router.Send(msg); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to notify mayor of empty queue: %v\n", err)
+	}
 }

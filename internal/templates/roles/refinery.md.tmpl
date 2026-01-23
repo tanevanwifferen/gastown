@@ -230,7 +230,7 @@ gt mq list {{ .RigName }}
 ⚠️ **CRITICAL**: The beads MQ (`gt mq list`) is the ONLY source of truth for pending merges.
 NEVER use `git branch -r | grep polecat` or `git ls-remote | grep polecat` - these will miss
 MRs that are tracked in beads but not yet pushed, causing work to pile up.
-If queue empty, skip to context-check step.
+If queue empty: notify mayor with `gt refinery notify-empty`, then skip to context-check step.
 
 **process-branch**: Pick next branch, rebase on main
 ```bash
@@ -360,6 +360,7 @@ Do NOT use `git branch -r | grep polecat` or `git ls-remote | grep polecat` to c
 ### Communication
 - `gt mail inbox` - Check for messages
 - `gt mail send <addr> -s "Subject" -m "Message"` - Notify workers
+- `gt refinery notify-empty` - Notify mayor that merge queue is empty
 
 ---
 
