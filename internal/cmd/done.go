@@ -13,7 +13,9 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
 	"github.com/steveyegge/gastown/internal/polecat"
+	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/townlog"
@@ -393,6 +395,31 @@ func runDone(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Priority: P%d\n", priority)
 		fmt.Println()
 		fmt.Printf("%s\n", style.Dim.Render("The Refinery will process your merge request."))
+
+		// Ensure refinery is running and nudge it about the new MR
+		if _, r, err := getRig(rigName); err == nil {
+			mgr := refinery.NewManager(r)
+			running, _ := mgr.IsRunning()
+			if !running {
+				fmt.Printf("\nStarting refinery for %s...\n", rigName)
+				if err := mgr.Start(false, ""); err != nil && err != refinery.ErrAlreadyRunning {
+					style.PrintWarning("could not start refinery: %v", err)
+				} else {
+					fmt.Printf("%s Refinery started\n", style.Bold.Render("✓"))
+				}
+			}
+			// Nudge the refinery about the new MR
+			t := tmux.NewTmux()
+			refinerySession := session.RefinerySessionName(rigName)
+			if exists, _ := t.HasSession(refinerySession); exists {
+				nudgeMsg := fmt.Sprintf("[from %s] New MR ready: %s (branch: %s, issue: %s)", sender, mrID, branch, issueID)
+				if err := t.NudgeSession(refinerySession, nudgeMsg); err != nil {
+					style.PrintWarning("could not nudge refinery: %v", err)
+				} else {
+					fmt.Printf("%s Refinery notified\n", style.Bold.Render("✓"))
+				}
+			}
+		}
 	} else if exitType == ExitPhaseComplete {
 		// Phase complete - register as waiter on gate, then recycle
 		fmt.Printf("%s Phase complete, awaiting gate\n", style.Bold.Render("→"))
